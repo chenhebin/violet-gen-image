@@ -1,0 +1,56 @@
+:root {
+  color-scheme: light;
+  --canvas: #f3f5f4;
+  --surface: #ffffff;
+  --surface-soft: #eef1ef;
+  --surface-raised: #f8faf9;
+  --sidebar: #202625;
+  --sidebar-soft: #29302f;
+  --sidebar-line: #39413f;
+  --ink: #1b1f1f;
+  --ink-muted: #66706d;
+  --ink-faint: #929a97;
+  --primary: #236c62;
+  --primary-hover: #18594f;
+  --primary-soft: #e5f0ed;
+  --success: #2f7451;
+  --success-soft: #e7f2eb;
+  --warning: #9b731f;
+  --warning-soft: #f7efd9;
+  --danger: #b8574b;
+  --danger-hover: #9f463c;
+  --danger-soft: #f8e9e6;
+  --info: #47758a;
+  --info-soft: #e8f0f4;
+  --border: #d9dfdc;
+  --border-strong: #c7ceca;
+  --scrim: rgb(18 24 23 / 56%);
+  --shadow-sm: 0 1px 2px rgb(22 30 28 / 5%);
+  --shadow-md: 0 18px 50px rgb(22 30 28 / 14%);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --sidebar-width: 232px;
+  --topbar-height: 64px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --motion-fast: 150ms;
+  --motion-normal: 240ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --font-body:
+    'Manrope Variable', 'PingFang SC', 'Microsoft YaHei', system-ui,
+    sans-serif;
+  --font-display:
+    'Songti SC', 'STSong', 'Noto Serif CJK SC', 'Source Han Serif SC',
+    serif;
+  --font-mono:
+    'SFMono-Regular', Consolas, 'Liberation Mono', ui-monospace, monospace;
+}

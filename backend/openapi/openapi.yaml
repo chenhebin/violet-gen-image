@@ -1,0 +1,3184 @@
+openapi: 3.1.0
+info:
+  title: Yingyan Platform API
+  version: 0.1.0
+  description: |
+    映研用户端、管理端与 Worker 共用的 HTTP 契约。
+    所有 JSON 成功响应均为 `{ code: 0, data }`，失败响应均为
+    `{ code, message, details? }`。素材地址均为短期签名地址。
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local API
+tags:
+  - name: Health
+  - name: User Auth
+  - name: User
+  - name: Generation
+  - name: Retouch
+  - name: Manage Auth
+  - name: Manage Redemption
+  - name: Manage AI
+  - name: Manage Users
+  - name: Manage Content
+  - name: Manage Retouch
+  - name: Manage Audit
+
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: healthLive
+      responses:
+        "200":
+          $ref: "#/components/responses/Health"
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: healthReady
+      responses:
+        "200":
+          $ref: "#/components/responses/Health"
+        "503":
+          $ref: "#/components/responses/Error"
+
+  /api/auth/register:
+    post:
+      tags: [User Auth]
+      operationId: registerUser
+      requestBody:
+        $ref: "#/components/requestBodies/UserRegister"
+      responses:
+        "201":
+          $ref: "#/components/responses/User"
+        "400":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/auth/login:
+    post:
+      tags: [User Auth]
+      operationId: loginUser
+      requestBody:
+        $ref: "#/components/requestBodies/Login"
+      responses:
+        "200":
+          $ref: "#/components/responses/User"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/auth/session:
+    get:
+      tags: [User Auth]
+      operationId: getUserSession
+      security:
+        - userSession: []
+      responses:
+        "200":
+          $ref: "#/components/responses/User"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/auth/logout:
+    post:
+      tags: [User Auth]
+      operationId: logoutUser
+      security:
+        - userSession: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Empty"
+        "401":
+          $ref: "#/components/responses/Error"
+
+  /api/me:
+    get:
+      tags: [User]
+      operationId: getCurrentUser
+      security:
+        - userSession: []
+      responses:
+        "200":
+          $ref: "#/components/responses/User"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/entitlements:
+    get:
+      tags: [User]
+      operationId: getEntitlement
+      security:
+        - userSession: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Entitlement"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/usage/ledger:
+    get:
+      tags: [User]
+      operationId: listUserLedger
+      security:
+        - userSession: []
+      responses:
+        "200":
+          description: 用户次数流水
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LedgerListSuccess"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/usage/quote:
+    post:
+      tags: [User]
+      operationId: quoteGeneration
+      security:
+        - userSession: []
+      requestBody:
+        $ref: "#/components/requestBodies/GenerationQuote"
+      responses:
+        "200":
+          description: 次数报价
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerationQuoteSuccess"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/redemptions/claim:
+    post:
+      tags: [User]
+      operationId: claimRedemptionCode
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/RedemptionClaim"
+      responses:
+        "200":
+          description: 兑换结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedemptionClaimSuccess"
+        "400":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /api/assets:
+    post:
+      tags: [User]
+      operationId: uploadUserAsset
+      security:
+        - userSession: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, kind]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  $ref: "#/components/schemas/UserAssetKind"
+                role:
+                  $ref: "#/components/schemas/ReferenceRole"
+      responses:
+        "201":
+          description: 上传后的素材
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetSuccess"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/assets/{assetId}:
+    delete:
+      tags: [User]
+      operationId: deleteUserAsset
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          $ref: "#/components/responses/Empty"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /api/prompts/optimize:
+    post:
+      tags: [Generation]
+      operationId: optimizePrompt
+      security:
+        - userSession: []
+      requestBody:
+        $ref: "#/components/requestBodies/PromptOptimize"
+      responses:
+        "200":
+          $ref: "#/components/responses/PromptVersion"
+        "400":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+  /api/prompts/confirm:
+    post:
+      tags: [Generation]
+      operationId: confirmPrompt
+      security:
+        - userSession: []
+      requestBody:
+        $ref: "#/components/requestBodies/PromptConfirm"
+      responses:
+        "200":
+          $ref: "#/components/responses/PromptVersion"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /api/generations:
+    post:
+      tags: [Generation]
+      operationId: createGeneration
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/GenerationCreate"
+      responses:
+        "202":
+          $ref: "#/components/responses/GenerationTask"
+        "400":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/tasks:
+    get:
+      tags: [Generation]
+      operationId: listGenerationTasks
+      security:
+        - userSession: []
+      responses:
+        "200":
+          description: 当前用户任务
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerationTaskListSuccess"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/tasks/{taskId}:
+    get:
+      tags: [Generation]
+      operationId: getGenerationTask
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenerationTask"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/tasks/{taskId}/cancel:
+    post:
+      tags: [Generation]
+      operationId: cancelGenerationTask
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          $ref: "#/components/responses/GenerationTask"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /api/retouch-tickets:
+    get:
+      tags: [Retouch]
+      operationId: listUserRetouchTickets
+      security:
+        - userSession: []
+      responses:
+        "200":
+          description: 当前用户人工工单
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetouchTicketListSuccess"
+  /api/retouch-tickets/{ticketId}:
+    get:
+      tags: [Retouch]
+      operationId: getUserRetouchTicket
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+      responses:
+        "200":
+          $ref: "#/components/responses/RetouchTicket"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/tasks/{taskId}/retouch-tickets:
+    post:
+      tags: [Retouch]
+      operationId: createRetouchTicket
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/RetouchCreate"
+      responses:
+        "201":
+          $ref: "#/components/responses/RetouchTicket"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/retouch-tickets/{ticketId}/quote/accept:
+    post:
+      tags: [Retouch]
+      operationId: acceptRetouchQuote
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/RetouchQuoteAccept"
+      responses:
+        "200":
+          $ref: "#/components/responses/RetouchWithEntitlement"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/retouch-tickets/{ticketId}/cancel:
+    post:
+      tags: [Retouch]
+      operationId: cancelRetouchTicket
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/RetouchWithEntitlement"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/retouch-tickets/{ticketId}/revisions:
+    post:
+      tags: [Retouch]
+      operationId: requestRetouchRevision
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/RetouchRevision"
+      responses:
+        "200":
+          $ref: "#/components/responses/RetouchTicket"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/retouch-tickets/{ticketId}/confirm:
+    post:
+      tags: [Retouch]
+      operationId: confirmRetouchTicket
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/RetouchTicket"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /api/manage/auth/login:
+    post:
+      tags: [Manage Auth]
+      operationId: loginAdmin
+      requestBody:
+        $ref: "#/components/requestBodies/Login"
+      responses:
+        "200":
+          $ref: "#/components/responses/AdminSession"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/manage/auth/session:
+    get:
+      tags: [Manage Auth]
+      operationId: getAdminSession
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AdminSession"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/manage/auth/logout:
+    post:
+      tags: [Manage Auth]
+      operationId: logoutAdmin
+      security:
+        - adminSession: []
+          csrfToken: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Empty"
+        "403":
+          $ref: "#/components/responses/Error"
+
+  /api/manage/dashboard:
+    get:
+      tags: [Manage Content]
+      operationId: getManageDashboard
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageDashboard"
+  /api/manage/audit-logs:
+    get:
+      tags: [Manage Audit]
+      operationId: listAuditLogs
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: operatorId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: resourceType
+          in: query
+          schema: { type: string }
+        - name: result
+          in: query
+          schema: { type: string, enum: [success, failure] }
+        - name: startAt
+          in: query
+          schema: { type: string, format: date-time }
+        - name: endAt
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAuditPage"
+        "403":
+          $ref: "#/components/responses/Error"
+
+  /api/manage/redemption-batches:
+    get:
+      tags: [Manage Redemption]
+      operationId: listRedemptionBatches
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: productCode
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRedemptionBatchPage"
+    post:
+      tags: [Manage Redemption]
+      operationId: createRedemptionBatch
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/RedemptionBatchCreate"
+      responses:
+        "201":
+          $ref: "#/components/responses/ManageRedemptionBatchCreated"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/manage/redemption-batches/{batchId}:
+    get:
+      tags: [Manage Redemption]
+      operationId: getRedemptionBatch
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/BatchId"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRedemptionBatch"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/manage/redemption-batches/{batchId}/reveal:
+    post:
+      tags: [Manage Redemption]
+      operationId: revealRedemptionBatch
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/BatchId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageGeneratedCodeList"
+  /api/manage/redemption-batches/{batchId}/export:
+    post:
+      tags: [Manage Redemption]
+      operationId: exportRedemptionBatch
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/BatchId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRedemptionBatchExport"
+
+  /api/manage/redemption-codes:
+    get:
+      tags: [Manage Redemption]
+      operationId: listRedemptionCodes
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/RedemptionCodeStatus"
+        - name: batchId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: productCode
+          in: query
+          schema: { type: string }
+        - name: redeemedBy
+          in: query
+          schema: { type: string }
+        - name: expiringSoon
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRedemptionCodePage"
+  /api/manage/redemption-codes/{codeId}:
+    get:
+      tags: [Manage Redemption]
+      operationId: getRedemptionCode
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/CodeId"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRedemptionCodeDetail"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/manage/redemption-codes/{codeId}/reveal:
+    post:
+      tags: [Manage Redemption]
+      operationId: revealRedemptionCode
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/CodeId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRedemptionCodeReveal"
+  /api/manage/redemption-codes/disable:
+    post:
+      tags: [Manage Redemption]
+      operationId: disableRedemptionCodes
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/RedemptionCodesDisable"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageBulkMutation"
+  /api/manage/redemption-codes/extend:
+    post:
+      tags: [Manage Redemption]
+      operationId: extendRedemptionCodes
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/RedemptionCodesExtend"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageBulkMutation"
+
+  /api/manage/ai-providers:
+    get:
+      tags: [Manage AI]
+      operationId: listAIProviders
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAIProviderList"
+    post:
+      tags: [Manage AI]
+      operationId: createAIProvider
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/AIProviderCreate"
+      responses:
+        "201":
+          $ref: "#/components/responses/ManageAIProvider"
+  /api/manage/ai-providers/{providerId}:
+    patch:
+      tags: [Manage AI]
+      operationId: updateAIProvider
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/AIProviderUpdate"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAIProvider"
+    delete:
+      tags: [Manage AI]
+      operationId: deleteAIProvider
+      description: 仅允许删除不含模型且未被平台绑定的服务商；历史任务快照不受影响。
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/Empty"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/manage/ai-providers/{providerId}/test:
+    post:
+      tags: [Manage AI]
+      operationId: testAIProvider
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAIProvider"
+  /api/manage/ai-providers/{providerId}/rotate-key:
+    post:
+      tags: [Manage AI]
+      operationId: rotateAIProviderKey
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ProviderId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/APIKeyRotate"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAIProvider"
+
+  /api/manage/ai-models:
+    get:
+      tags: [Manage AI]
+      operationId: listAIModels
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - name: providerId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAIModelList"
+    post:
+      tags: [Manage AI]
+      operationId: createAIModel
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/AIModelCreate"
+      responses:
+        "201":
+          $ref: "#/components/responses/ManageAIModel"
+  /api/manage/ai-models/{modelId}:
+    patch:
+      tags: [Manage AI]
+      operationId: updateAIModel
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ModelId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/AIModelUpdate"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAIModel"
+    delete:
+      tags: [Manage AI]
+      operationId: deleteAIModel
+      description: 仅允许删除未承担平台绑定的模型；历史任务快照不受影响。
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ModelId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/Empty"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/manage/ai-models/{modelId}/test:
+    post:
+      tags: [Manage AI]
+      operationId: testAIModel
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/ModelId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAIModel"
+  /api/manage/platform-model-bindings:
+    get:
+      tags: [Manage AI]
+      operationId: getPlatformModelBindings
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      responses:
+        "200":
+          $ref: "#/components/responses/ManagePlatformModelBindings"
+    post:
+      tags: [Manage AI]
+      operationId: bindPlatformModel
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/PlatformModelBind"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManagePlatformModelBindings"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /api/manage/users:
+    get:
+      tags: [Manage Users]
+      operationId: listManagedUsers
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, disabled] }
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageUserPage"
+  /api/manage/users/{userId}:
+    get:
+      tags: [Manage Users]
+      operationId: getManagedUser
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageUserDetail"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/manage/users/{userId}/status:
+    post:
+      tags: [Manage Users]
+      operationId: setManagedUserStatus
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/UserStatusUpdate"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageUser"
+  /api/manage/users/{userId}/reset-password:
+    post:
+      tags: [Manage Users]
+      operationId: resetManagedUserPassword
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManagePasswordReset"
+  /api/manage/users/{userId}/adjust-credits:
+    post:
+      tags: [Manage Users]
+      operationId: adjustManagedUserCredits
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/CreditAdjustment"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageCreditAdjustment"
+        "409":
+          $ref: "#/components/responses/Error"
+  /api/manage/usage-ledger:
+    get:
+      tags: [Manage Users]
+      operationId: listManagedUsageLedger
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: userId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: type
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageLedgerPage"
+
+  /api/manage/generation-tasks:
+    get:
+      tags: [Manage Content]
+      operationId: listManagedGenerationTasks
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/GenerationStatus"
+        - name: mode
+          in: query
+          schema:
+            $ref: "#/components/schemas/GenerationMode"
+        - name: userId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageGenerationTaskPage"
+  /api/manage/generation-tasks/{taskId}:
+    get:
+      tags: [Manage Content]
+      operationId: getManagedGenerationTask
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageGenerationTask"
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /api/manage/assets:
+    get:
+      tags: [Manage Content]
+      operationId: listManagedAssets
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: kind
+          in: query
+          schema: { type: string }
+        - name: retained
+          in: query
+          schema: { type: boolean }
+        - name: userId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAssetPage"
+  /api/manage/assets/{assetId}:
+    get:
+      tags: [Manage Content]
+      operationId: getManagedAsset
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAsset"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/manage/assets/{assetId}/signed-url:
+    post:
+      tags: [Manage Content]
+      operationId: signManagedAsset
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageSignedAsset"
+  /api/manage/assets/{assetId}/retain:
+    post:
+      tags: [Manage Content]
+      operationId: retainManagedAsset
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/AssetRetain"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAsset"
+  /api/manage/assets/{assetId}/cleanup:
+    post:
+      tags: [Manage Content]
+      operationId: cleanupManagedAsset
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/Reason"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageAsset"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /api/manage/retouch-tickets:
+    get:
+      tags: [Manage Retouch]
+      operationId: listManagedRetouchTickets
+      x-permission: retouch:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/Search"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/RetouchStatus"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRetouchPage"
+  /api/manage/retouch-tickets/{ticketId}:
+    get:
+      tags: [Manage Retouch]
+      operationId: getManagedRetouchTicket
+      x-permission: retouch:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRetouchTicket"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/manage/retouch-tickets/{ticketId}/quote:
+    post:
+      tags: [Manage Retouch]
+      operationId: quoteManagedRetouchTicket
+      x-permission: retouch:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/RetouchQuote"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRetouchTicket"
+  /api/manage/retouch-tickets/{ticketId}/start:
+    post:
+      tags: [Manage Retouch]
+      operationId: startManagedRetouchTicket
+      x-permission: retouch:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRetouchTicket"
+  /api/manage/retouch-tickets/{ticketId}/deliver:
+    post:
+      tags: [Manage Retouch]
+      operationId: deliverManagedRetouchTicket
+      x-permission: retouch:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  minItems: 1
+                  maxItems: 4
+                  items:
+                    type: string
+                    format: binary
+                note:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRetouchTicket"
+  /api/manage/retouch-tickets/{ticketId}/reject:
+    post:
+      tags: [Manage Retouch]
+      operationId: rejectManagedRetouchTicket
+      x-permission: retouch:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/Reason"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRetouchTicket"
+  /api/manage/retouch-tickets/{ticketId}/fail:
+    post:
+      tags: [Manage Retouch]
+      operationId: failManagedRetouchTicket
+      x-permission: retouch:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/TicketId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/Reason"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRetouchTicket"
+
+components:
+  securitySchemes:
+    userSession:
+      type: apiKey
+      in: cookie
+      name: yy_user_session
+    adminSession:
+      type: apiKey
+      in: cookie
+      name: yy_manage_session
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Search:
+      name: keyword
+      in: query
+      schema: { type: string, maxLength: 200 }
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AssetId:
+      name: assetId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TicketId:
+      name: ticketId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    BatchId:
+      name: batchId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CodeId:
+      name: codeId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ProviderId:
+      name: providerId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ModelId:
+      name: modelId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  requestBodies:
+    Login:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/LoginInput"
+    UserRegister:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RegisterInput"
+    GenerationQuote:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [action, outputCount]
+            properties:
+              action: { type: string, const: generate }
+              outputCount: { type: integer, minimum: 1, maximum: 4 }
+    RedemptionClaim:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [code]
+            properties:
+              code: { type: string, minLength: 1, maxLength: 128 }
+    PromptOptimize:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PromptOptimizeInput"
+    PromptConfirm:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PromptConfirmInput"
+    GenerationCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GenerationCreateInput"
+    RetouchCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RetouchCreateInput"
+    RetouchQuoteAccept:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [quoteId]
+            properties:
+              quoteId: { type: string, format: uuid }
+    RetouchRevision:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [message]
+            properties:
+              message: { type: string, minLength: 1, maxLength: 500 }
+    RedemptionBatchCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RedemptionBatchCreateInput"
+    RedemptionCodesDisable:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [codeIds, reason]
+            properties:
+              codeIds:
+                type: array
+                minItems: 1
+                maxItems: 500
+                uniqueItems: true
+                items: { type: string, format: uuid }
+              reason: { type: string, minLength: 1, maxLength: 500 }
+    RedemptionCodesExtend:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [codeIds, expiresAt, reason]
+            properties:
+              codeIds:
+                type: array
+                minItems: 1
+                maxItems: 500
+                uniqueItems: true
+                items: { type: string, format: uuid }
+              expiresAt: { type: string, format: date-time }
+              reason: { type: string, minLength: 1, maxLength: 500 }
+    AIProviderCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AIProviderCreateInput"
+    AIProviderUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AIProviderUpdateInput"
+    APIKeyRotate:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [apiKey]
+            properties:
+              apiKey: { type: string, minLength: 8, maxLength: 4096 }
+    AIModelCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AIModelCreateInput"
+    AIModelUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AIModelUpdateInput"
+    PlatformModelBind:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [type, modelId]
+            properties:
+              type: { type: string, enum: [chat, image] }
+              modelId:
+                type: [string, "null"]
+                format: uuid
+    UserStatusUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [status, reason]
+            properties:
+              status: { type: string, enum: [active, disabled] }
+              reason: { type: string, minLength: 1, maxLength: 500 }
+    CreditAdjustment:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [amount, reason]
+            properties:
+              amount:
+                type: integer
+                minimum: -100000
+                maximum: 100000
+                not: { const: 0 }
+              reason: { type: string, minLength: 1, maxLength: 500 }
+    AssetRetain:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [retained, reason]
+            properties:
+              retained: { type: boolean }
+              reason: { type: string, minLength: 1, maxLength: 500 }
+    Reason:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [reason]
+            properties:
+              reason: { type: string, minLength: 1, maxLength: 500 }
+    RetouchQuote:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [credits]
+            properties:
+              credits: { type: integer, minimum: 1, maximum: 10000 }
+              note: { type: string, maxLength: 500 }
+
+  responses:
+    Health:
+      description: 进程或依赖健康
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status]
+            properties:
+              status: { type: string, enum: [ok, ready] }
+    Error:
+      description: 统一错误响应
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    Empty:
+      description: 成功，无业务数据
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EmptySuccess"
+    ManageDashboard:
+      description: 管理端运行概览
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageDashboardSuccess"
+    ManageAuditPage:
+      description: 管理端审计日志分页结果
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageAuditPageSuccess"
+    ManageRedemptionBatchPage:
+      description: 兑换码批次分页结果
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageRedemptionBatchPageSuccess"
+    ManageRedemptionBatch:
+      description: 兑换码批次
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageRedemptionBatchSuccess"
+    ManageRedemptionBatchCreated:
+      description: 新建兑换码批次及完整兑换码
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageRedemptionBatchCreatedSuccess"
+    ManageGeneratedCodeList:
+      description: 批次内仍可使用的完整兑换码
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageGeneratedCodeListSuccess"
+    ManageRedemptionBatchExport:
+      description: 兑换码批次 CSV 内容
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageRedemptionBatchExportSuccess"
+    ManageRedemptionCodePage:
+      description: 兑换码分页结果
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageRedemptionCodePageSuccess"
+    ManageRedemptionCodeDetail:
+      description: 兑换码及操作历史
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageRedemptionCodeDetailSuccess"
+    ManageRedemptionCodeReveal:
+      description: 单个完整兑换码
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageRedemptionCodeRevealSuccess"
+    ManageBulkMutation:
+      description: 兑换码批量操作结果
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageBulkMutationSuccess"
+    ManageAIProviderList:
+      description: AI 服务商列表
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageAIProviderListSuccess"
+    ManageAIProvider:
+      description: AI 服务商
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageAIProviderSuccess"
+    ManageAIModelList:
+      description: AI 模型列表
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageAIModelListSuccess"
+    ManageAIModel:
+      description: AI 模型
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageAIModelSuccess"
+    ManagePlatformModelBindings:
+      description: 平台模型绑定
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManagePlatformModelBindingsSuccess"
+    ManageUserPage:
+      description: 用户分页结果
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageUserPageSuccess"
+    ManageUser:
+      description: 管理端用户
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageUserSuccess"
+    ManageUserDetail:
+      description: 管理端用户详情
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageUserDetailSuccess"
+    ManagePasswordReset:
+      description: 一次性临时密码
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManagePasswordResetSuccess"
+    ManageCreditAdjustment:
+      description: 人工调次后的用户及流水
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageCreditAdjustmentSuccess"
+    ManageLedgerPage:
+      description: 次数流水分页结果
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageLedgerPageSuccess"
+    ManageGenerationTaskPage:
+      description: 生图任务分页结果
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageGenerationTaskPageSuccess"
+    ManageGenerationTask:
+      description: 生图任务管理详情
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageGenerationTaskSuccess"
+    ManageAssetPage:
+      description: 素材分页结果
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageAssetPageSuccess"
+    ManageAsset:
+      description: 管理端素材
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageAssetSuccess"
+    ManageSignedAsset:
+      description: 素材短期签名地址
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageSignedAssetSuccess"
+    User:
+      description: 用户账号
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UserSuccess"
+    AdminSession:
+      description: 管理员 Session
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AdminSessionSuccess"
+    Entitlement:
+      description: 用户次数权益
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EntitlementSuccess"
+    PromptVersion:
+      description: 提示词版本
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PromptVersionSuccess"
+    GenerationTask:
+      description: 生图任务
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GenerationTaskSuccess"
+    RetouchTicket:
+      description: 人工修图工单
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RetouchTicketSuccess"
+    RetouchWithEntitlement:
+      description: 工单与最新权益
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RetouchWithEntitlementSuccess"
+    ManageRetouchTicket:
+      description: 管理端人工修图工单
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageRetouchTicketSuccess"
+    ManageRetouchPage:
+      description: 管理端人工修图工单分页结果
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ManageRetouchPageSuccess"
+
+  schemas:
+    ApiError:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: { type: integer, minimum: 1 }
+        message: { type: string }
+        details: true
+    EmptySuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data: { type: "null" }
+    ApiSuccessEnvelope:
+      type: object
+      required: [code]
+      properties:
+        code: { type: integer, const: 0 }
+    ManagePageMetadata:
+      type: object
+      required: [page, pageSize, total, hasMore]
+      properties:
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+        hasMore: { type: boolean }
+    ManageDashboardMetric:
+      type: object
+      additionalProperties: false
+      required: [key, label, value, tone]
+      properties:
+        key:
+          type: string
+          enum:
+            - unusedCodes
+            - expiringCodes
+            - redeemedToday
+            - creditsGrantedToday
+            - failedTasks
+            - pendingTickets
+        label: { type: string }
+        value: { type: integer, minimum: 0 }
+        tone: { type: string, enum: [neutral, positive, warning, danger] }
+    ManageDashboardModelSummary:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, modelId, providerName, type]
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string }
+        modelId: { type: string }
+        providerName: { type: string }
+        type: { type: string, enum: [chat, image] }
+    ManageDashboardAlert:
+      type: object
+      additionalProperties: false
+      required: [id, type, title, description, tone, href]
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [provider, task, redemption, retouch] }
+        title: { type: string }
+        description: { type: string }
+        tone: { type: string, enum: [warning, danger] }
+        href: { type: string }
+    ManageDashboardData:
+      type: object
+      additionalProperties: false
+      required: [metrics, currentModels, alerts, pendingTickets, recentBatches]
+      properties:
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManageDashboardMetric"
+        currentModels:
+          type: object
+          additionalProperties: false
+          properties:
+            chat:
+              $ref: "#/components/schemas/ManageDashboardModelSummary"
+            image:
+              $ref: "#/components/schemas/ManageDashboardModelSummary"
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManageDashboardAlert"
+        pendingTickets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManageRetouchSummary"
+        recentBatches:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManageRedemptionBatch"
+    ManageRedemptionCounts:
+      type: object
+      additionalProperties: false
+      required: [unused, redeemed, expired, disabled]
+      properties:
+        unused: { type: integer, minimum: 0 }
+        redeemed: { type: integer, minimum: 0 }
+        expired: { type: integer, minimum: 0 }
+        disabled: { type: integer, minimum: 0 }
+    ManageRedemptionBatch:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - productCode
+        - quantity
+        - creditsPerCode
+        - expiresAt
+        - neverExpires
+        - createdBy
+        - createdAt
+        - counts
+        - usageRate
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        productCode: { type: string }
+        quantity: { type: integer, minimum: 1, maximum: 500 }
+        creditsPerCode: { type: integer, minimum: 1 }
+        expiresAt: { type: [string, "null"], format: date-time }
+        neverExpires: { type: boolean }
+        note: { type: string }
+        createdBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+        counts:
+          $ref: "#/components/schemas/ManageRedemptionCounts"
+        usageRate: { type: number, minimum: 0, maximum: 1 }
+    ManageRedemptionCode:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - maskedCode
+        - batchId
+        - batchName
+        - productCode
+        - credits
+        - status
+        - expiresAt
+        - createdAt
+        - expiringSoon
+      properties:
+        id: { type: string, format: uuid }
+        maskedCode: { type: string }
+        batchId: { type: string, format: uuid }
+        batchName: { type: string }
+        productCode: { type: string }
+        credits: { type: integer, minimum: 1 }
+        status:
+          $ref: "#/components/schemas/RedemptionCodeStatus"
+        expiresAt: { type: [string, "null"], format: date-time }
+        redeemedBy: { type: string, format: uuid }
+        redeemedByEmail: { type: string, format: email }
+        redeemedAt: { type: string, format: date-time }
+        disabledBy: { type: string, format: uuid }
+        disabledAt: { type: string, format: date-time }
+        disabledReason: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiringSoon: { type: boolean }
+    ManageRedemptionOperation:
+      type: object
+      additionalProperties: false
+      required: [action, operator, createdAt]
+      properties:
+        action: { type: string, enum: [generated, redeemed, disabled] }
+        operator: { type: string }
+        reason: { type: string }
+        createdAt: { type: string, format: date-time }
+    ManageRedemptionCodeDetail:
+      allOf:
+        - $ref: "#/components/schemas/ManageRedemptionCode"
+        - type: object
+          required: [operationHistory]
+          properties:
+            operationHistory:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManageRedemptionOperation"
+    ManageGeneratedCode:
+      type: object
+      additionalProperties: false
+      required: [id, fullCode, maskedCode]
+      properties:
+        id: { type: string, format: uuid }
+        fullCode:
+          type: string
+          description: 仅平台管理员可见的完整兑换码
+        maskedCode: { type: string }
+    ManageRedemptionBatchCreatedData:
+      type: object
+      additionalProperties: false
+      required: [batch, codes]
+      properties:
+        batch:
+          $ref: "#/components/schemas/ManageRedemptionBatch"
+        codes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ManageGeneratedCode"
+    ManageRedemptionBatchExportData:
+      type: object
+      additionalProperties: false
+      required: [filename, csv]
+      properties:
+        filename: { type: string }
+        csv: { type: string }
+    ManageRedemptionCodeRevealData:
+      type: object
+      additionalProperties: false
+      required: [id, fullCode]
+      properties:
+        id: { type: string, format: uuid }
+        fullCode:
+          type: string
+          description: 仅平台管理员可见的完整兑换码
+    ManageBulkMutationData:
+      type: object
+      additionalProperties: false
+      required: [affected, skipped, failed]
+      properties:
+        affected: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+    ManageConnectionStatus:
+      type: string
+      enum: [untested, healthy, error]
+    ManageAIProviderLastTest:
+      type: object
+      additionalProperties: false
+      required: [testedAt, success, message]
+      properties:
+        testedAt: { type: string, format: date-time }
+        success: { type: boolean }
+        message: { type: string }
+    ManageAIProviderData:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - code
+        - protocol
+        - baseUrl
+        - maskedApiKey
+        - enabled
+        - connectionStatus
+        - lastTest
+        - note
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        code: { type: string }
+        protocol: { type: string, const: openai-compatible }
+        baseUrl: { type: string, format: uri }
+        maskedApiKey: { type: string }
+        enabled: { type: boolean }
+        connectionStatus:
+          $ref: "#/components/schemas/ManageConnectionStatus"
+        lastTest:
+          oneOf:
+            - $ref: "#/components/schemas/ManageAIProviderLastTest"
+            - type: "null"
+        note: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ManageAIModelCapabilities:
+      type: object
+      additionalProperties: false
+      properties:
+        promptOptimization: { type: boolean }
+        visionInput: { type: boolean }
+        textToImage: { type: boolean }
+        imageToImage: { type: boolean }
+    ManageAIModelData:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - providerId
+        - providerName
+        - displayName
+        - modelId
+        - type
+        - enabled
+        - connectionStatus
+        - capabilities
+        - lastTestAt
+        - createdAt
+        - updatedAt
+        - isPlatformModel
+      properties:
+        id: { type: string, format: uuid }
+        providerId: { type: string, format: uuid }
+        providerName: { type: string }
+        displayName: { type: string }
+        modelId: { type: string }
+        type: { type: string, enum: [chat, image] }
+        enabled: { type: boolean }
+        connectionStatus:
+          $ref: "#/components/schemas/ManageConnectionStatus"
+        capabilities:
+          $ref: "#/components/schemas/ManageAIModelCapabilities"
+        lastTestAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        isPlatformModel: { type: boolean }
+    ManagePlatformModelBindingsData:
+      type: object
+      additionalProperties: false
+      required: [chatModelId, imageModelId]
+      properties:
+        chatModelId: { type: [string, "null"], format: uuid }
+        imageModelId: { type: [string, "null"], format: uuid }
+    ManagedUser:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - email
+        - status
+        - balance
+        - totalRedeemed
+        - totalConsumed
+        - taskCount
+        - ticketCount
+        - createdAt
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        status: { type: string, enum: [active, disabled] }
+        balance: { type: integer, minimum: 0 }
+        totalRedeemed: { type: integer, minimum: 0 }
+        totalConsumed: { type: integer, minimum: 0 }
+        taskCount: { type: integer, minimum: 0 }
+        ticketCount: { type: integer, minimum: 0 }
+        lastLoginAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        disabledReason: { type: string }
+    ManagedLedgerEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - userId
+        - type
+        - amount
+        - balanceBefore
+        - balanceAfter
+        - description
+        - createdAt
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        type:
+          type: string
+          enum: [redemption, reserve, release, refund, adjustment]
+        amount: { type: integer }
+        balanceBefore: { type: integer, minimum: 0 }
+        balanceAfter: { type: integer, minimum: 0 }
+        description: { type: string }
+        reason: { type: string }
+        referenceNo: { type: string }
+        operatorId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+    ManagedAsset:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - ownerId
+        - ownerEmail
+        - name
+        - kind
+        - mimeType
+        - size
+        - width
+        - height
+        - retained
+        - retentionExpiresAt
+        - createdAt
+      properties:
+        id: { type: string, format: uuid }
+        ownerId: { type: string }
+        ownerEmail: { type: string }
+        name: { type: string }
+        kind:
+          type: string
+          enum: [source, reference, retouch-reference, ai-result, retouch-result]
+        role:
+          $ref: "#/components/schemas/ReferenceRole"
+        mimeType: { type: string }
+        size: { type: integer, minimum: 0 }
+        width: { type: integer, minimum: 0 }
+        height: { type: integer, minimum: 0 }
+        previewUrl: { type: string, format: uri }
+        taskId: { type: string, format: uuid }
+        ticketId: { type: string, format: uuid }
+        retained: { type: boolean }
+        retentionExpiresAt: { type: [string, "null"], format: date-time }
+        deletedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    ManagedGenerationTaskSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - ownerId
+        - ownerEmail
+        - title
+        - mode
+        - status
+        - progress
+        - requestedCount
+        - successfulCount
+        - reservedCredits
+        - spentCredits
+        - refundedCredits
+        - providerName
+        - modelName
+        - hasRetouchTicket
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        ownerEmail: { type: string, format: email }
+        title: { type: string }
+        mode:
+          $ref: "#/components/schemas/GenerationMode"
+        status:
+          $ref: "#/components/schemas/GenerationStatus"
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        requestedCount: { type: integer, minimum: 1, maximum: 4 }
+        successfulCount: { type: integer, minimum: 0, maximum: 4 }
+        reservedCredits: { type: integer, minimum: 0 }
+        spentCredits: { type: integer, minimum: 0 }
+        refundedCredits: { type: integer, minimum: 0 }
+        providerName: { type: string }
+        modelName: { type: string }
+        hasRetouchTicket: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ManageExecutionSnapshot:
+      type: object
+      additionalProperties: false
+      required: [providerId, providerName, modelId, modelName, configVersion]
+      properties:
+        providerId: { type: string, format: uuid }
+        providerName: { type: string }
+        modelId: { type: string }
+        modelName: { type: string }
+        configVersion: { type: integer, minimum: 0 }
+    ManagedGenerationTask:
+      allOf:
+        - $ref: "#/components/schemas/ManagedGenerationTaskSummary"
+        - type: object
+          required:
+            - sourceRequirement
+            - optimizedPrompt
+            - confirmedPrompt
+            - settings
+            - assets
+            - results
+            - executionSnapshot
+          properties:
+            sourceRequirement: { type: string }
+            optimizedPrompt:
+              $ref: "#/components/schemas/PromptSections"
+            confirmedPrompt:
+              $ref: "#/components/schemas/PromptSections"
+            settings:
+              $ref: "#/components/schemas/GenerationSettings"
+            assets:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManagedAsset"
+            results:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManagedAsset"
+            executionSnapshot:
+              $ref: "#/components/schemas/ManageExecutionSnapshot"
+            errorMessage: { type: string }
+            retouchTicket:
+              $ref: "#/components/schemas/RetouchSummary"
+    ManagedUserDetail:
+      allOf:
+        - $ref: "#/components/schemas/ManagedUser"
+        - type: object
+          required: [ledger, redemptionCodes, tasks, tickets]
+          properties:
+            ledger:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManagedLedgerEntry"
+            redemptionCodes:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManageRedemptionCode"
+            tasks:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManagedGenerationTaskSummary"
+            tickets:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManageRetouchSummary"
+    ManagePasswordResetData:
+      type: object
+      additionalProperties: false
+      required: [temporaryPassword, expiresAt]
+      properties:
+        temporaryPassword:
+          type: string
+          description: 仅本次响应返回的一次性临时密码
+        expiresAt: { type: string, format: date-time }
+    ManageCreditAdjustmentData:
+      type: object
+      additionalProperties: false
+      required: [user, ledger]
+      properties:
+        user:
+          $ref: "#/components/schemas/ManagedUser"
+        ledger:
+          $ref: "#/components/schemas/ManagedLedgerEntry"
+    ManageAuditEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - operatorId
+        - operatorEmail
+        - operatorRole
+        - action
+        - resourceType
+        - resourceId
+        - result
+        - requestId
+        - createdAt
+      properties:
+        id: { type: string, format: uuid }
+        operatorId: { type: string }
+        operatorEmail: { type: string }
+        operatorRole: { type: string }
+        action: { type: string }
+        resourceType: { type: string }
+        resourceId: { type: string }
+        before: { type: object, additionalProperties: true }
+        after: { type: object, additionalProperties: true }
+        reason: { type: string }
+        result: { type: string, enum: [success, failure] }
+        requestId: { type: string }
+        ip: { type: string }
+        device: { type: string }
+        createdAt: { type: string, format: date-time }
+    ManageSignedAssetData:
+      type: object
+      additionalProperties: false
+      required: [url, expiresAt]
+      properties:
+        url: { type: string, format: uri }
+        expiresAt: { type: string, format: date-time }
+    ManageRedemptionBatchPage:
+      allOf:
+        - $ref: "#/components/schemas/ManagePageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManageRedemptionBatch"
+    ManageRedemptionCodePage:
+      allOf:
+        - $ref: "#/components/schemas/ManagePageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManageRedemptionCode"
+    ManageUserPage:
+      allOf:
+        - $ref: "#/components/schemas/ManagePageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManagedUser"
+    ManageLedgerPage:
+      allOf:
+        - $ref: "#/components/schemas/ManagePageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManagedLedgerEntry"
+    ManageGenerationTaskPage:
+      allOf:
+        - $ref: "#/components/schemas/ManagePageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManagedGenerationTaskSummary"
+    ManageAssetPage:
+      allOf:
+        - $ref: "#/components/schemas/ManagePageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManagedAsset"
+    ManageAuditPage:
+      allOf:
+        - $ref: "#/components/schemas/ManagePageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManageAuditEvent"
+    ManageDashboardSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageDashboardData"
+    ManageAuditPageSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageAuditPage"
+    ManageRedemptionBatchPageSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageRedemptionBatchPage"
+    ManageRedemptionBatchSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageRedemptionBatch"
+    ManageRedemptionBatchCreatedSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageRedemptionBatchCreatedData"
+    ManageGeneratedCodeListSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManageGeneratedCode"
+    ManageRedemptionBatchExportSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageRedemptionBatchExportData"
+    ManageRedemptionCodePageSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageRedemptionCodePage"
+    ManageRedemptionCodeDetailSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageRedemptionCodeDetail"
+    ManageRedemptionCodeRevealSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageRedemptionCodeRevealData"
+    ManageBulkMutationSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageBulkMutationData"
+    ManageAIProviderListSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManageAIProviderData"
+    ManageAIProviderSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageAIProviderData"
+    ManageAIModelListSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManageAIModelData"
+    ManageAIModelSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageAIModelData"
+    ManagePlatformModelBindingsSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManagePlatformModelBindingsData"
+    ManageUserPageSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageUserPage"
+    ManageUserSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManagedUser"
+    ManageUserDetailSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManagedUserDetail"
+    ManagePasswordResetSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManagePasswordResetData"
+    ManageCreditAdjustmentSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageCreditAdjustmentData"
+    ManageLedgerPageSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageLedgerPage"
+    ManageGenerationTaskPageSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageGenerationTaskPage"
+    ManageGenerationTaskSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManagedGenerationTask"
+    ManageAssetPageSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageAssetPage"
+    ManageAssetSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManagedAsset"
+    ManageSignedAssetSuccess:
+      allOf:
+        - $ref: "#/components/schemas/ApiSuccessEnvelope"
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: "#/components/schemas/ManageSignedAssetData"
+    LoginInput:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 320 }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        remember: { type: boolean, default: false }
+    RegisterInput:
+      allOf:
+        - $ref: "#/components/schemas/LoginInput"
+        - type: object
+          required: [acceptedTerms]
+          properties:
+            acceptedTerms: { type: boolean, const: true }
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, email, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        createdAt: { type: string, format: date-time }
+    UserSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          $ref: "#/components/schemas/User"
+    AdminSession:
+      type: object
+      additionalProperties: false
+      required: [id, email, name, role, permissions, csrfToken]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        role: { type: string, enum: [platform_admin, retouch_operator] }
+        permissions:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: ["platform:manage", "retouch:manage"] }
+        csrfToken: { type: string }
+    AdminSessionSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          $ref: "#/components/schemas/AdminSession"
+    Entitlement:
+      type: object
+      additionalProperties: false
+      required: [balance, canCreate, status]
+      properties:
+        balance: { type: integer, minimum: 0 }
+        canCreate: { type: boolean }
+        status: { type: string, enum: [unredeemed, active, empty] }
+    EntitlementSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          $ref: "#/components/schemas/Entitlement"
+    LedgerEntry:
+      type: object
+      required: [id, type, amount, balanceAfter, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        type:
+          type: string
+          enum: [redemption, reserve, release, refund, adjustment]
+        amount: { type: integer }
+        balanceAfter: { type: integer, minimum: 0 }
+        description: { type: string }
+        createdAt: { type: string, format: date-time }
+    LedgerListSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/LedgerEntry"
+    GenerationQuoteSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          type: object
+          required: [action, cost, balance, canSubmit]
+          properties:
+            action: { type: string, const: generate }
+            cost: { type: integer, minimum: 1, maximum: 4 }
+            balance: { type: integer, minimum: 0 }
+            canSubmit: { type: boolean }
+    RedemptionClaimSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          type: object
+          required: [added, entitlement]
+          properties:
+            added: { type: integer, minimum: 1 }
+            entitlement:
+              $ref: "#/components/schemas/Entitlement"
+    UserAssetKind:
+      type: string
+      enum: [source, reference, retouch-reference]
+    ReferenceRole:
+      type: string
+      enum: [style, composition, person, detail]
+    Asset:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, mimeType, size, uploadProgress]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        kind: { type: string }
+        role:
+          $ref: "#/components/schemas/ReferenceRole"
+        mimeType: { type: string, enum: [image/jpeg, image/png, image/webp] }
+        size: { type: integer, minimum: 0 }
+        width: { type: integer, minimum: 1 }
+        height: { type: integer, minimum: 1 }
+        previewUrl: { type: string, format: uri }
+        uploadProgress: { type: integer, minimum: 0, maximum: 100 }
+        ownerId: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
+    AssetSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          $ref: "#/components/schemas/Asset"
+    GenerationMode:
+      type: string
+      enum: [text-to-image, image-to-image]
+    PromptSections:
+      type: object
+      additionalProperties: false
+      required: [subject, scene, style, composition, details, negative, output]
+      properties:
+        subject: { type: string }
+        scene: { type: string }
+        style: { type: string }
+        composition: { type: string }
+        details: { type: string }
+        negative: { type: string }
+        output: { type: string }
+    PromptReferenceAsset:
+      type: object
+      additionalProperties: false
+      required: [assetId, role]
+      properties:
+        assetId: { type: string, format: uuid }
+        role:
+          $ref: "#/components/schemas/ReferenceRole"
+    PromptOptimizeInput:
+      type: object
+      additionalProperties: false
+      required: [source, mode, sourceAssetIds, referenceAssets]
+      properties:
+        source: { type: string, minLength: 4, maxLength: 2000 }
+        mode:
+          $ref: "#/components/schemas/GenerationMode"
+        sourceAssetIds:
+          type: array
+          maxItems: 8
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        referenceAssets:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/PromptReferenceAsset"
+    PromptConfirmInput:
+      type: object
+      additionalProperties: false
+      required: [id, source, sections]
+      properties:
+        id: { type: string, format: uuid }
+        source: { type: string, minLength: 1, maxLength: 2000 }
+        sections:
+          $ref: "#/components/schemas/PromptSections"
+    PromptVersion:
+      type: object
+      additionalProperties: false
+      required: [id, source, sections]
+      properties:
+        id: { type: string, format: uuid }
+        source: { type: string }
+        sections:
+          $ref: "#/components/schemas/PromptSections"
+        confirmedAt: { type: string, format: date-time }
+    PromptVersionSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          $ref: "#/components/schemas/PromptVersion"
+    GenerationSettings:
+      type: object
+      additionalProperties: false
+      required: [aspectRatio, outputCount, referenceStrength]
+      properties:
+        aspectRatio: { type: string, enum: ["1:1", "3:4", "4:3", "9:16", "16:9"] }
+        outputCount: { type: integer, minimum: 1, maximum: 4 }
+        referenceStrength: { type: integer, minimum: 0, maximum: 100 }
+    GenerationCreateInput:
+      type: object
+      additionalProperties: false
+      required: [promptVersionId, assetIds, settings]
+      properties:
+        promptVersionId: { type: string, format: uuid }
+        assetIds:
+          type: array
+          maxItems: 8
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        settings:
+          $ref: "#/components/schemas/GenerationSettings"
+    GenerationStatus:
+      type: string
+      enum: [queued, processing, completed, partial, failed, cancelled]
+    GenerationResult:
+      type: object
+      additionalProperties: false
+      required: [id, url, downloadUrl, width, height]
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string, format: uri }
+        downloadUrl:
+          type: string
+          format: uri
+          description: 短期有效并带 attachment 文件名的签名下载地址
+        width: { type: integer, minimum: 1 }
+        height: { type: integer, minimum: 1 }
+    GenerationTask:
+      type: object
+      required:
+        - id
+        - mode
+        - title
+        - status
+        - prompt
+        - settings
+        - assets
+        - requestedCount
+        - successfulCount
+        - reservedCredits
+        - spentCredits
+        - refundedCredits
+        - progress
+        - results
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        mode:
+          $ref: "#/components/schemas/GenerationMode"
+        title: { type: string }
+        status:
+          $ref: "#/components/schemas/GenerationStatus"
+        prompt:
+          $ref: "#/components/schemas/PromptVersion"
+        settings:
+          $ref: "#/components/schemas/GenerationSettings"
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+        requestedCount: { type: integer, minimum: 1, maximum: 4 }
+        successfulCount: { type: integer, minimum: 0, maximum: 4 }
+        reservedCredits: { type: integer, minimum: 0 }
+        spentCredits: { type: integer, minimum: 0 }
+        refundedCredits: { type: integer, minimum: 0 }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/GenerationResult"
+        retouchTicket:
+          $ref: "#/components/schemas/RetouchSummary"
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    GenerationTaskSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          $ref: "#/components/schemas/GenerationTask"
+    GenerationTaskListSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/GenerationTask"
+    RetouchStatus:
+      type: string
+      enum:
+        - submitted
+        - quote_pending
+        - accepted
+        - processing
+        - awaiting_confirmation
+        - delivered
+        - rejected
+        - cancelled
+    RetouchSummary:
+      type: object
+      required: [id, ticketNo, status, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        ticketNo: { type: string }
+        status:
+          $ref: "#/components/schemas/RetouchStatus"
+        updatedAt: { type: string, format: date-time }
+        quoteCredits: { type: integer, minimum: 1 }
+    RetouchCreateInput:
+      type: object
+      additionalProperties: false
+      required: [selectedResultIds, requirement, supplementalAssetIds]
+      properties:
+        selectedResultIds:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        requirement: { type: string, minLength: 1, maxLength: 1000 }
+        supplementalAssetIds:
+          type: array
+          maxItems: 4
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    RetouchTicket:
+      type: object
+      required:
+        - id
+        - ticketNo
+        - taskId
+        - taskTitle
+        - status
+        - selectedResults
+        - requirement
+        - supplementalAssets
+        - timeline
+        - reservedCredits
+        - spentCredits
+        - refundedCredits
+        - deliverables
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string, format: uuid }
+        ticketNo: { type: string }
+        taskId: { type: string, format: uuid }
+        taskTitle: { type: string }
+        status:
+          $ref: "#/components/schemas/RetouchStatus"
+        selectedResults:
+          type: array
+          items:
+            $ref: "#/components/schemas/GenerationResult"
+        requirement: { type: string }
+        supplementalAssets:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+        quote:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            credits: { type: integer, minimum: 1 }
+            createdAt: { type: string, format: date-time }
+        timeline:
+          type: array
+          items:
+            type: object
+            required: [status, createdAt]
+            properties:
+              status:
+                $ref: "#/components/schemas/RetouchStatus"
+              action: { type: string }
+              note: { type: string }
+              createdAt: { type: string, format: date-time }
+        reservedCredits: { type: integer, minimum: 0 }
+        spentCredits: { type: integer, minimum: 0 }
+        refundedCredits: { type: integer, minimum: 0 }
+        revision:
+          type: object
+          properties:
+            message: { type: string }
+            requestedAt: { type: string, format: date-time }
+        deliverables:
+          type: array
+          items:
+            $ref: "#/components/schemas/GenerationResult"
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    RetouchTicketSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          $ref: "#/components/schemas/RetouchTicket"
+    RetouchTicketListSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetouchTicket"
+    ManageUserSummary:
+      type: object
+      additionalProperties: false
+      required: [id, email, status]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        status: { type: string, enum: [active, disabled] }
+    ManageSourceTask:
+      type: object
+      additionalProperties: false
+      required: [id, title, mode, status, modelName, sourceRequirement]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        mode: { type: string, enum: [text-to-image, image-to-image] }
+        status: { type: string }
+        modelName: { type: string }
+        sourceRequirement: { type: string }
+    ManageRetouchTicket:
+      allOf:
+        - $ref: "#/components/schemas/RetouchTicket"
+        - type: object
+          required: [user, sourceTaskDetail]
+          properties:
+            user:
+              $ref: "#/components/schemas/ManageUserSummary"
+            sourceTaskDetail:
+              $ref: "#/components/schemas/ManageSourceTask"
+    ManageRetouchTicketSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          $ref: "#/components/schemas/ManageRetouchTicket"
+    ManageRetouchSummary:
+      type: object
+      additionalProperties: false
+      required: [id, ticketNo, taskId, taskTitle, status, user, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        ticketNo: { type: string }
+        taskId: { type: string, format: uuid }
+        taskTitle: { type: string }
+        status:
+          $ref: "#/components/schemas/RetouchStatus"
+        quoteCredits: { type: integer, minimum: 1 }
+        user:
+          $ref: "#/components/schemas/ManageUserSummary"
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ManageRetouchPageSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          type: object
+          additionalProperties: false
+          required: [items, page, pageSize, total, hasMore]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManageRetouchSummary"
+            page: { type: integer, minimum: 1 }
+            pageSize: { type: integer, minimum: 1, maximum: 100 }
+            total: { type: integer, minimum: 0 }
+            hasMore: { type: boolean }
+    RetouchWithEntitlementSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          type: object
+          required: [ticket, entitlement]
+          properties:
+            ticket:
+              $ref: "#/components/schemas/RetouchTicket"
+            entitlement:
+              $ref: "#/components/schemas/Entitlement"
+    RedemptionCodeStatus:
+      type: string
+      enum: [unused, redeemed, expired, disabled]
+    RedemptionBatchCreateInput:
+      type: object
+      additionalProperties: false
+      required: [name, quantity, creditsPerCode, productCode]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        quantity: { type: integer, minimum: 1, maximum: 500 }
+        creditsPerCode: { type: integer, minimum: 1, maximum: 100000 }
+        productCode: { type: string, minLength: 1, maxLength: 100 }
+        expiresAt: { type: [string, "null"], format: date-time }
+        note: { type: string, maxLength: 1000 }
+    AIProviderCreateInput:
+      type: object
+      additionalProperties: false
+      required: [name, code, baseUrl, apiKey]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        code: { type: string, pattern: "^[a-z][a-z0-9_-]{1,63}$" }
+        baseUrl: { type: string, format: uri }
+        apiKey: { type: string, minLength: 8, maxLength: 4096 }
+        enabled: { type: boolean, default: true }
+        note: { type: string, maxLength: 1000 }
+    AIProviderUpdateInput:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        baseUrl: { type: string, format: uri }
+        enabled: { type: boolean }
+        note: { type: string, maxLength: 1000 }
+    ModelCapabilities:
+      type: object
+      additionalProperties: false
+      properties:
+        promptOptimization: { type: boolean }
+        visionInput: { type: boolean }
+        textToImage: { type: boolean }
+        imageToImage: { type: boolean }
+    AIModelCreateInput:
+      type: object
+      additionalProperties: false
+      required: [providerId, displayName, modelId, type, capabilities]
+      properties:
+        providerId: { type: string, format: uuid }
+        displayName: { type: string, minLength: 1, maxLength: 100 }
+        modelId: { type: string, minLength: 1, maxLength: 200 }
+        type: { type: string, enum: [chat, image] }
+        enabled: { type: boolean, default: true }
+        capabilities:
+          $ref: "#/components/schemas/ModelCapabilities"
+    AIModelUpdateInput:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 100 }
+        modelId: { type: string, minLength: 1, maxLength: 200 }
+        enabled: { type: boolean }
+        capabilities:
+          $ref: "#/components/schemas/ModelCapabilities"

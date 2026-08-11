@@ -1,0 +1,250 @@
+.retouch-form {
+  display: grid;
+  gap: 24px;
+}
+
+.form-section {
+  display: grid;
+  gap: 12px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.section-heading span {
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 780;
+}
+
+.section-heading h3 {
+  margin-top: 2px;
+  font-size: 14px;
+}
+
+.section-heading b {
+  color: var(--ink-faint);
+  font-size: 10px;
+}
+
+.result-grid,
+.supplemental-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.result-option {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 3 / 4;
+  border: 2px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  transition:
+    border-color var(--motion-fast),
+    transform var(--motion-fast);
+}
+
+.result-option:hover {
+  transform: translateY(-1px);
+}
+
+.result-option.selected {
+  border-color: var(--primary);
+}
+
+.result-option img,
+.supplemental-item > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.result-index {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  left: 6px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  background: rgb(23 25 29 / 74%);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.selection-mark {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 80%);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 88%);
+  color: transparent;
+}
+
+.result-option.selected .selection-mark {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: white;
+}
+
+textarea {
+  width: 100%;
+  min-height: 124px;
+  resize: vertical;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  outline: 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgb(20 108 99 / 10%);
+}
+
+textarea::placeholder {
+  color: var(--ink-faint);
+}
+
+.upload-option,
+.supplemental-item {
+  overflow: hidden;
+  min-height: 132px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.upload-option {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 4px;
+  color: var(--ink-muted);
+}
+
+.upload-option:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.upload-option strong {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.upload-option span {
+  font-size: 9px;
+}
+
+.supplemental-item {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 34px;
+  border-style: solid;
+}
+
+.supplemental-item > img {
+  height: 98px;
+}
+
+.supplemental-item > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 5px;
+  padding-left: 8px;
+  color: var(--ink-faint);
+}
+
+.supplemental-item span {
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.supplemental-item button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  background: transparent;
+  color: var(--ink-faint);
+}
+
+.supplemental-item button:hover {
+  color: var(--danger);
+}
+
+.association-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.association-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.association-note p {
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.form-error {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+footer {
+  position: sticky;
+  z-index: 2;
+  bottom: -24px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 24px;
+  margin: 0 -24px -24px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 -12px 24px rgb(23 25 29 / 4%);
+}
+
+@media (max-width: 600px) {
+  .retouch-form {
+    gap: 20px;
+  }
+
+  .result-grid,
+  .supplemental-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+}

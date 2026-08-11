@@ -1,0 +1,139 @@
+name: yingyan
+
+x-backend-image: &backend-image
+  image: ${BACKEND_IMAGE:-yingyan-backend}:${BACKEND_IMAGE_TAG:-dev}
+  build:
+    context: .
+
+x-backend-environment: &backend-environment
+  APP_ENV: development
+  DATABASE_URL: postgres://yingyan:${POSTGRES_PASSWORD:-yingyan_dev}@postgres:5432/yingyan?sslmode=disable
+  MINIO_ENDPOINT: minio:9000
+  MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-127.0.0.1:9000}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-yingyan}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-yingyan_dev_secret}
+  MINIO_BUCKET: ${MINIO_BUCKET:-yingyan-assets}
+  MINIO_REGION: us-east-1
+  MINIO_USE_SSL: "false"
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-change-me-32-bytes}
+  TOKEN_PEPPER: ${TOKEN_PEPPER:-dev-token-pepper-change-me}
+  REDEMPTION_PEPPER: ${REDEMPTION_PEPPER:-dev-redemption-pepper-change-me}
+  COOKIE_SECURE: "false"
+  COOKIE_SAME_SITE: lax
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174}
+  PROVIDER_ALLOW_HTTP: ${PROVIDER_ALLOW_HTTP:-false}
+  PROVIDER_ALLOW_PRIVATE_NETWORK: ${PROVIDER_ALLOW_PRIVATE_NETWORK:-false}
+  PROVIDER_CONNECT_TIMEOUT: ${PROVIDER_CONNECT_TIMEOUT:-10s}
+  PROVIDER_REQUEST_TIMEOUT: ${PROVIDER_REQUEST_TIMEOUT:-180s}
+  PROVIDER_RESPONSE_HEADER_TIMEOUT: ${PROVIDER_RESPONSE_HEADER_TIMEOUT:-180s}
+  WORKER_STALE_AFTER: ${WORKER_STALE_AFTER:-5m}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: yingyan
+      POSTGRES_USER: yingyan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yingyan_dev}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yingyan -d yingyan"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-yingyan}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-yingyan_dev_secret}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        mc alias set local http://minio:9000
+        ${MINIO_ACCESS_KEY:-yingyan}
+        ${MINIO_SECRET_KEY:-yingyan_dev_secret}
+        && mc mb --ignore-existing local/${MINIO_BUCKET:-yingyan-assets}
+        && mc anonymous set none local/${MINIO_BUCKET:-yingyan-assets}
+    restart: "no"
+
+  migrate:
+    profiles: ["tools"]
+    <<: *backend-image
+    entrypoint: ["/app/migrate"]
+    environment: *backend-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  seed:
+    profiles: ["tools"]
+    <<: *backend-image
+    entrypoint: ["/app/seed"]
+    environment: *backend-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *backend-image
+    entrypoint: ["/app/api"]
+    environment: *backend-environment
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  worker:
+    <<: *backend-image
+    entrypoint: ["/app/worker"]
+    environment: *backend-environment
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8081/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:
