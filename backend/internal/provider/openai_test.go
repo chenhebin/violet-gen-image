@@ -115,6 +115,7 @@ func TestGenerateTextToImageParsesBase64AndSignedURL(t *testing.T) {
 		Model:       "image-model",
 		Prompt:      "portrait",
 		OutputCount: 2,
+		Size:        "800x1200",
 	})
 	if err != nil {
 		t.Fatalf("GenerateTextToImage() error = %v", err)
@@ -137,6 +138,9 @@ func TestGenerateTextToImageParsesBase64AndSignedURL(t *testing.T) {
 	if requestBody["n"] != float64(2) {
 		t.Fatalf("multi-image request n = %#v, want 2", requestBody["n"])
 	}
+	if requestBody["size"] != "800x1200" {
+		t.Fatalf("image request size = %#v, want %q", requestBody["size"], "800x1200")
+	}
 	if _, exists := requestBody["response_format"]; exists {
 		t.Fatalf("image request unexpectedly included response_format: %#v", requestBody["response_format"])
 	}
@@ -150,6 +154,7 @@ func TestGenerateImageToImageStreamsMultipart(t *testing.T) {
 	type captured struct {
 		model      string
 		prompt     string
+		size       string
 		imageCount int
 		imageData  []byte
 	}
@@ -169,6 +174,7 @@ func TestGenerateImageToImageStreamsMultipart(t *testing.T) {
 		requests <- captured{
 			model:      request.FormValue("model"),
 			prompt:     request.FormValue("prompt"),
+			size:       request.FormValue("size"),
 			imageCount: len(files),
 			imageData:  imageData,
 		}
@@ -193,6 +199,7 @@ func TestGenerateImageToImageStreamsMultipart(t *testing.T) {
 			},
 		},
 		OutputCount: 1,
+		Size:        "800x1200",
 	})
 	if err != nil {
 		t.Fatalf("GenerateImageToImage() error = %v", err)
@@ -203,6 +210,7 @@ func TestGenerateImageToImageStreamsMultipart(t *testing.T) {
 	capturedRequest := <-requests
 	if capturedRequest.model != "image-model" ||
 		capturedRequest.prompt != "retouch" ||
+		capturedRequest.size != "800x1200" ||
 		capturedRequest.imageCount != 1 ||
 		string(capturedRequest.imageData) != string(onePixelPNG) {
 		t.Fatalf("multipart request = %#v", capturedRequest)

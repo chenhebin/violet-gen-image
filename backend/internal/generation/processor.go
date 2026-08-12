@@ -270,14 +270,20 @@ func (p *Processor) execute(ctx context.Context, job model.GenerationJob) error 
 			Size: SizeForAspectRatio(settings.AspectRatio), UserReference: task.UserID,
 		})
 	} else {
-		inputs, closers, openErr := p.imageInputs(ctx, task.ID)
+		inputs, closers, sourceWidth, sourceHeight, openErr := p.imageInputs(ctx, task.ID)
 		if openErr != nil {
 			err = openErr
 		} else {
 			defer closeAll(closers)
+			outputSize := SizeForSourceImage(
+				task.ModelNameSnapshot,
+				sourceWidth,
+				sourceHeight,
+				settings.AspectRatio,
+			)
 			images, err = adapter.GenerateImageToImage(ctx, provider.ImageToImageRequest{
 				Model: task.ModelNameSnapshot, Prompt: fullPrompt, Images: inputs,
-				OutputCount: 1, Size: SizeForAspectRatio(settings.AspectRatio), UserReference: task.UserID,
+				OutputCount: 1, Size: outputSize, UserReference: task.UserID,
 			})
 		}
 	}
@@ -454,15 +460,16 @@ func (p *Processor) fail(ctx context.Context, job model.GenerationJob, cause err
 func (p *Processor) imageInputs(
 	ctx context.Context,
 	taskID string,
-) ([]provider.ImageInput, []io.Closer, error) {
+) ([]provider.ImageInput, []io.Closer, int, int, error) {
 	var links []model.GenerationTaskAsset
 	if err := p.db.WithContext(ctx).Where("task_id = ?", taskID).
 		Order("CASE WHEN usage = 'source' THEN 0 ELSE 1 END ASC").
 		Order("created_at ASC").Find(&links).Error; err != nil {
-		return nil, nil, err
+		return nil, nil, 0, 0, err
 	}
 	inputs := make([]provider.ImageInput, 0, len(links))
 	closers := make([]io.Closer, 0, len(links))
+	sourceWidth, sourceHeight := 0, 0
 	for _, link := range links {
 		if link.Usage != asset.KindSource && link.Usage != asset.KindReference {
 			continue
@@ -470,12 +477,16 @@ func (p *Processor) imageInputs(
 		assetModel, err := p.assets.GetByID(ctx, link.AssetID)
 		if err != nil {
 			closeAll(closers)
-			return nil, nil, err
+			return nil, nil, 0, 0, err
+		}
+		// The first source image owns the output canvas; references never override it.
+		if link.Usage == asset.KindSource && sourceWidth == 0 && sourceHeight == 0 {
+			sourceWidth, sourceHeight = assetModel.Width, assetModel.Height
 		}
 		reader, err := p.assets.Open(ctx, *assetModel)
 		if err != nil {
 			closeAll(closers)
-			return nil, nil, err
+			return nil, nil, 0, 0, err
 		}
 		closers = append(closers, reader)
 		inputs = append(inputs, provider.ImageInput{
@@ -483,9 +494,9 @@ func (p *Processor) imageInputs(
 		})
 	}
 	if len(inputs) == 0 {
-		return nil, nil, errors.New("image-to-image task has no input image")
+		return nil, nil, 0, 0, errors.New("image-to-image task has no input image")
 	}
-	return inputs, closers, nil
+	return inputs, closers, sourceWidth, sourceHeight, nil
 }
 
 func terminalState(completed, failed, total int, now time.Time) (string, *time.Time) {

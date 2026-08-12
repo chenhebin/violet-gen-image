@@ -239,9 +239,7 @@ aside {
   right: 0;
   display: grid;
   width: 66.6667vw;
-  min-width: 720px;
-  max-width: 100%;
-  height: 100%;
+  min-width: 720px; max-width: 100%; height: 100%;
   grid-template-rows: auto minmax(0, 1fr) auto;
   border-left: 1px solid var(--border);
   background: var(--surface);
@@ -497,11 +495,5 @@ footer {
     display: none;
   }
 }
-
-@media (max-width: 760px) {
-  aside {
-    width: 100%;
-    min-width: 0;
-  }
-}
+@media (max-width: 760px) { aside { width: 100%; min-width: 0; } }
 </style>
