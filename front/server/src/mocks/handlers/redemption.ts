@@ -21,6 +21,7 @@ import type {
   CreateRedemptionBatchResult,
   DisableRedemptionPayload,
   ExtendRedemptionPayload,
+  UpdateRedemptionBatchPayload,
 } from '@/types/domain'
 import { createId } from '@/utils/id'
 import { paginate } from '@/utils/pagination'
@@ -162,6 +163,8 @@ export const redemptionHandlers = [
       return idempotentMutation(db, admin, request, payload, () => {
         if (
           !payload.name?.trim() ||
+          Array.from(payload.name.trim()).length >
+            REDEMPTION_CONFIG.batchNameMaxLength ||
           !Number.isInteger(payload.quantity) ||
           payload.quantity < REDEMPTION_CONFIG.minQuantity ||
           payload.quantity > REDEMPTION_CONFIG.maxQuantity ||
@@ -252,6 +255,53 @@ export const redemptionHandlers = [
             maskedCode: `YY-****-****-${item.fullCode.slice(-4)}`,
           })),
         } satisfies CreateRedemptionBatchResult
+      })
+    }),
+  ),
+
+  http.patch('/api/manage/redemption-batches/:batchId', ({ params, request }) =>
+    respond(async () => {
+      const payload = await readJson<UpdateRedemptionBatchPayload>(request)
+      const { db, admin } = dbAndAdmin('platform:manage')
+      return idempotentMutation(db, admin, request, payload, () => {
+        const batch = db.batches.find((item) => item.id === params.batchId)
+        if (!batch) {
+          throw new MockApiError(
+            404,
+            ErrorCode.InvalidPayload,
+            '生成批次不存在',
+          )
+        }
+        const name = payload.name?.trim()
+        if (!name) {
+          throw new MockApiError(
+            400,
+            ErrorCode.InvalidPayload,
+            '批次名称不能为空',
+            { field: 'name' },
+          )
+        }
+        if (Array.from(name).length > REDEMPTION_CONFIG.batchNameMaxLength) {
+          throw new MockApiError(
+            400,
+            ErrorCode.InvalidPayload,
+            `批次名称不能超过 ${REDEMPTION_CONFIG.batchNameMaxLength} 个字符`,
+            { field: 'name' },
+          )
+        }
+        const previousName = batch.name
+        batch.name = name
+        const result = publicBatch(batch, db)
+        appendAudit(db, admin, {
+          action: 'redemption_batch.rename',
+          resourceType: 'redemption_batch',
+          resourceId: batch.id,
+          before: { name: previousName },
+          after: { name },
+          result: 'success',
+          requestId: requestId(request),
+        })
+        return result
       })
     }),
   ),

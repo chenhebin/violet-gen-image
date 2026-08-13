@@ -14,6 +14,7 @@ import type {
   RedemptionCode,
   RedemptionCodeDetail,
   RedemptionCodeQuery,
+  UpdateRedemptionBatchPayload,
 } from '@/types/domain'
 
 function emptyPage<T>(): PageResult<T> {
@@ -100,6 +101,19 @@ export const useRedemptionStore = defineStore('redemption', () => {
     return latestCreated.value
   }
 
+  async function updateBatch(
+    batchId: string,
+    payload: UpdateRedemptionBatchPayload,
+  ) {
+    const updated = await runMutation(() =>
+      redemptionApi.updateBatch(batchId, payload),
+    )
+    const index = batches.value.items.findIndex((item) => item.id === batchId)
+    if (index >= 0) batches.value.items[index] = updated
+    if (currentBatch.value?.id === batchId) currentBatch.value = updated
+    return updated
+  }
+
   async function revealCode(codeId: string): Promise<string> {
     const result = await runMutation(() => redemptionApi.revealCode(codeId))
     revealedCodes.value[codeId] = result.fullCode
@@ -161,6 +175,7 @@ export const useRedemptionStore = defineStore('redemption', () => {
     loadCode,
     loadBatch,
     createBatch,
+    updateBatch,
     revealCode,
     revealBatch,
     exportBatch,
@@ -169,4 +184,3 @@ export const useRedemptionStore = defineStore('redemption', () => {
     clearSensitiveValues,
   }
 })
-

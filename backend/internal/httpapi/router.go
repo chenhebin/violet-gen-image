@@ -117,6 +117,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	platform.GET("/redemption-batches", deps.AdminHandler.ListRedemptionBatches)
 	platform.GET("/redemption-batches/:batchId", deps.AdminHandler.GetRedemptionBatch)
 	platform.POST("/redemption-batches", deps.AdminHandler.CreateRedemptionBatch)
+	platform.PATCH("/redemption-batches/:batchId", deps.AdminHandler.UpdateRedemptionBatch)
 	platform.POST("/redemption-codes/:codeId/reveal", deps.AdminHandler.RevealRedemptionCode)
 	platform.POST("/redemption-batches/:batchId/reveal", deps.AdminHandler.RevealRedemptionBatch)
 	platform.POST("/redemption-batches/:batchId/export", deps.AdminHandler.ExportRedemptionBatch)

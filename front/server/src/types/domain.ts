@@ -162,6 +162,10 @@ export interface CreateRedemptionBatchResult {
   }>
 }
 
+export interface UpdateRedemptionBatchPayload {
+  name: string
+}
+
 export interface RedemptionCodeQuery extends PageQuery {
   status?: RedemptionCodeStatus
   batchId?: string

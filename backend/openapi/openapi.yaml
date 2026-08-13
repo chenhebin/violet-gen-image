@@ -531,6 +531,28 @@ paths:
           $ref: "#/components/responses/ManageRedemptionBatch"
         "404":
           $ref: "#/components/responses/Error"
+    patch:
+      tags: [Manage Redemption]
+      operationId: updateRedemptionBatch
+      description: 只修改批次展示名称，不改变批次内兑换码、次数、商品标识或有效期。
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+          csrfToken: []
+      parameters:
+        - $ref: "#/components/parameters/BatchId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/RedemptionBatchUpdate"
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageRedemptionBatch"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
   /api/manage/redemption-batches/{batchId}/reveal:
     post:
       tags: [Manage Redemption]
@@ -1351,6 +1373,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/RedemptionBatchCreateInput"
+    RedemptionBatchUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RedemptionBatchUpdateInput"
     RedemptionCodesDisable:
       required: true
       content:
@@ -1851,7 +1879,7 @@ components:
         - usageRate
       properties:
         id: { type: string, format: uuid }
-        name: { type: string }
+        name: { type: string, minLength: 1, maxLength: 60 }
         productCode: { type: string }
         quantity: { type: integer, minimum: 1, maximum: 500 }
         creditsPerCode: { type: integer, minimum: 1 }
@@ -3128,12 +3156,18 @@ components:
       additionalProperties: false
       required: [name, quantity, creditsPerCode, productCode]
       properties:
-        name: { type: string, minLength: 1, maxLength: 120 }
+        name: { type: string, minLength: 1, maxLength: 60 }
         quantity: { type: integer, minimum: 1, maximum: 500 }
         creditsPerCode: { type: integer, minimum: 1, maximum: 100000 }
         productCode: { type: string, minLength: 1, maxLength: 100 }
         expiresAt: { type: [string, "null"], format: date-time }
         note: { type: string, maxLength: 1000 }
+    RedemptionBatchUpdateInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 60 }
     AIProviderCreateInput:
       type: object
       additionalProperties: false

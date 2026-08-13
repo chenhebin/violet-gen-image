@@ -8,6 +8,7 @@ import ExtendRedemptionModal from '@/components/redemptions/ExtendRedemptionModa
 import GenerateCodesModal from '@/components/redemptions/GenerateCodesModal.vue'
 import RedemptionBatchDrawer from '@/components/redemptions/RedemptionBatchDrawer.vue'
 import RedemptionBatchesTable from '@/components/redemptions/RedemptionBatchesTable.vue'
+import RenameRedemptionBatchModal from '@/components/redemptions/RenameRedemptionBatchModal.vue'
 import { APP_CONFIG } from '@/config'
 import { useToast } from '@/composables/useToast'
 import { useRedemptionStore } from '@/stores/redemption'
@@ -16,6 +17,7 @@ import type {
   CreateRedemptionBatchResult,
   RedemptionBatch,
   RedemptionCode,
+  UpdateRedemptionBatchPayload,
 } from '@/types'
 
 const route = useRoute()
@@ -35,6 +37,7 @@ const drawerOpen = ref(false)
 const selectedBatch = ref<RedemptionBatch | null>(null)
 const disableBatch = ref<RedemptionBatch | null>(null)
 const extendBatch = ref<RedemptionBatch | null>(null)
+const renameBatch = ref<RedemptionBatch | null>(null)
 const exportingId = ref<string | null>(null)
 const revealingBatch = ref(false)
 
@@ -213,6 +216,18 @@ async function confirmExtend(payload: {
   }
 }
 
+async function confirmRename(payload: UpdateRedemptionBatchPayload) {
+  if (!renameBatch.value) return
+  try {
+    const updated = await store.updateBatch(renameBatch.value.id, payload)
+    if (selectedBatch.value?.id === updated.id) selectedBatch.value = updated
+    renameBatch.value = null
+    toast.success('批次名称已更新')
+  } catch (error) {
+    toast.error({ title: '批次名称更新失败', message: errorText(error) })
+  }
+}
+
 onMounted(() => {
   void search(false)
 })
@@ -300,6 +315,7 @@ onBeforeUnmount(store.clearSensitiveValues)
       @export="exportBatch"
       @disable="disableBatch = $event"
       @extend="extendBatch = $event"
+      @rename="renameBatch = $event"
     />
   </main>
 
@@ -354,6 +370,14 @@ onBeforeUnmount(store.clearSensitiveValues)
     :loading="store.isMutating"
     @close="extendBatch = null"
     @confirm="confirmExtend"
+  />
+
+  <RenameRedemptionBatchModal
+    :open="Boolean(renameBatch)"
+    :batch="renameBatch"
+    :loading="store.isMutating"
+    @close="renameBatch = null"
+    @submit="confirmRename"
   />
 </template>
 

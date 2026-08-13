@@ -44,7 +44,7 @@ x-backend-environment: &backend-environment
   PROVIDER_CONNECT_TIMEOUT: ${PROVIDER_CONNECT_TIMEOUT:-10s}
   PROVIDER_REQUEST_TIMEOUT: ${PROVIDER_REQUEST_TIMEOUT:-180s}
   PROVIDER_RESPONSE_HEADER_TIMEOUT: ${PROVIDER_RESPONSE_HEADER_TIMEOUT:-180s}
-  ALLOW_DEMO_SEED: "false"
+  ALLOW_ACCOUNT_SEED: "false"
 
 services:
   postgres:
@@ -124,15 +124,42 @@ services:
       - no-new-privileges:true
     logging: *default-logging
 
+  seed:
+    profiles: ["tools"]
+    image: ${BACKEND_IMAGE:-yingyan-backend}:${IMAGE_TAG:-latest}
+    entrypoint: ["/app/seed"]
+    environment:
+      <<: *backend-environment
+      ALLOW_ACCOUNT_SEED: ${ALLOW_ACCOUNT_SEED:-false}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
+      CLIENT_USER_EMAIL: ${CLIENT_USER_EMAIL:-}
+      CLIENT_USER_PASSWORD: ${CLIENT_USER_PASSWORD:-}
+      RETOUCH_ADMIN_EMAIL: ${RETOUCH_ADMIN_EMAIL:-}
+      RETOUCH_ADMIN_PASSWORD: ${RETOUCH_ADMIN_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    networks:
+      - app
+      - data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
   bootstrap-admin:
     profiles: ["tools"]
     image: ${BACKEND_IMAGE:-yingyan-backend}:${IMAGE_TAG:-latest}
     entrypoint: ["/app/bootstrap-admin"]
     environment:
       <<: *backend-environment
-      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
-      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
-      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-平台管理员}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
+      PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-}
+      PLATFORM_ADMIN_NAME: ${PLATFORM_ADMIN_NAME:-平台管理员}
     depends_on:
       postgres:
         condition: service_healthy

@@ -14,6 +14,7 @@ import type {
   RedemptionCode,
   RedemptionCodeDetail,
   RedemptionCodeQuery,
+  UpdateRedemptionBatchPayload,
 } from '@/types/domain'
 
 export const redemptionApi = {
@@ -60,6 +61,15 @@ export const redemptionApi = {
     })
   },
 
+  updateBatch(batchId: string, payload: UpdateRedemptionBatchPayload) {
+    return apiRequest<RedemptionBatch>({
+      method: 'PATCH',
+      url: `/manage/redemption-batches/${batchId}`,
+      data: payload,
+      headers: mutationHeaders('rename_redemption_batch'),
+    })
+  },
+
   revealCode(codeId: string) {
     return apiRequest<{ id: string; fullCode: string }>({
       method: 'POST',
@@ -102,4 +112,3 @@ export const redemptionApi = {
     })
   },
 }
-

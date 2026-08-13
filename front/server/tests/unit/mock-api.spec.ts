@@ -10,6 +10,7 @@ import {
 import { handlers } from '@/mocks/handlers'
 import { resetDb } from '@/mocks/db'
 import { authApi } from '@/services/auth'
+import { auditApi } from '@/services/audits'
 import { apiRequest, httpClient } from '@/services/http'
 import { providerApi } from '@/services/providers'
 import { redemptionApi } from '@/services/redemption'
@@ -98,6 +99,50 @@ describe('management mock API', () => {
     expect(
       batches.items.filter((item) => item.name === payload.name),
     ).toHaveLength(1)
+  })
+
+  it('renames a redemption batch and keeps code references in sync', async () => {
+    await loginAdmin()
+    const batches = await redemptionApi.listBatches({ pageSize: 100 })
+    const target = batches.items[0]
+    const renamed = await redemptionApi.updateBatch(target.id, {
+      name: '  八月咸鱼发码批次  ',
+    })
+    const [detail, codes, audits] = await Promise.all([
+      redemptionApi.getBatch(target.id),
+      redemptionApi.listCodes({ batchId: target.id, pageSize: 100 }),
+      auditApi.list({
+        action: 'redemption_batch.rename',
+        resourceType: 'redemption_batch',
+        pageSize: 100,
+      }),
+    ])
+
+    expect(renamed.name).toBe('八月咸鱼发码批次')
+    expect(detail.name).toBe(renamed.name)
+    expect(codes.items.every((item) => item.batchName === renamed.name)).toBe(true)
+    expect(audits.items[0]).toEqual(
+      expect.objectContaining({
+        action: 'redemption_batch.rename',
+        resourceId: target.id,
+        before: { name: target.name },
+        after: { name: renamed.name },
+      }),
+    )
+  })
+
+  it('rejects an invalid redemption batch name', async () => {
+    await loginAdmin()
+    const batches = await redemptionApi.listBatches({ pageSize: 1 })
+
+    await expect(
+      redemptionApi.updateBatch(batches.items[0].id, { name: '   ' }),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        code: ErrorCode.InvalidPayload,
+        message: '批次名称不能为空',
+      }),
+    )
   })
 
   it('rejects a credit adjustment that would create a negative balance', async () => {

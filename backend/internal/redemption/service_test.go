@@ -1,6 +1,7 @@
 package redemption
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,32 @@ func TestStatusPriority(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := Status(test.code, now); got != test.want {
 				t.Fatalf("Status() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeBatchName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "trim spaces", input: "  暑期人像修图  ", want: "暑期人像修图"},
+		{name: "empty", input: "  ", wantErr: true},
+		{name: "maximum Chinese length", input: strings.Repeat("映", BatchNameMaxLength), want: strings.Repeat("映", BatchNameMaxLength)},
+		{name: "too long", input: strings.Repeat("映", BatchNameMaxLength+1), wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := NormalizeBatchName(test.input)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("NormalizeBatchName() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if got != test.want {
+				t.Fatalf("NormalizeBatchName() = %q, want %q", got, test.want)
 			}
 		})
 	}

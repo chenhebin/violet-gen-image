@@ -2,7 +2,12 @@ import { expect, test, type Page } from '@playwright/test'
 
 async function login(page: Page, role: '平台管理员' | '修图操作员') {
   await page.goto('/manage/login')
-  await page.getByRole('button', { name: role }).click()
+  const credentials =
+    role === '平台管理员'
+      ? { email: 'admin@yingyan.local', password: 'Admin1234!' }
+      : { email: 'retouch@yingyan.local', password: 'Retouch1234!' }
+  await page.getByLabel('邮箱').fill(credentials.email)
+  await page.getByLabel('密码').fill(credentials.password)
   await page.getByRole('button', { name: '登录管理端' }).click()
   await expect(page).toHaveURL(/\/manage\/dashboard/)
 }
@@ -46,6 +51,23 @@ test('管理员可原子生成兑换码批次', async ({ page }) => {
     }),
   ).toBeVisible()
   await expect(resultDialog.getByText('3 个兑换码')).toBeVisible()
+})
+
+test('管理员可修改生成批次名称', async ({ page }) => {
+  await login(page, '平台管理员')
+  await page.goto('/manage/redemption-batches')
+
+  const firstRow = page.locator('tbody tr').first()
+  await firstRow.getByRole('button', { name: '更多操作' }).click()
+  await page.getByRole('button', { name: '修改批次名称' }).click()
+
+  const dialog = page.getByRole('dialog', { name: '修改批次名称' })
+  await expect(dialog).toBeVisible()
+  await dialog.locator('#rename-batch-name').fill('E2E 已更新批次名称')
+  await dialog.getByRole('button', { name: '保存名称' }).click()
+
+  await expect(dialog).toBeHidden()
+  await expect(firstRow.getByText('E2E 已更新批次名称', { exact: true })).toBeVisible()
 })
 
 test('管理员可新增服务商并切换平台生图模型', async ({ page }) => {

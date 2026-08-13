@@ -5,14 +5,13 @@ import {
   ArrowRight,
   Eye,
   EyeOff,
-  Image,
   LockKeyhole,
   Mail,
 } from '@lucide/vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import SegmentedControl from '@/components/base/SegmentedControl.vue'
 import { useToast } from '@/composables/useToast'
-import { AUTH_CONFIG, DEMO_ACCOUNT } from '@/config'
+import { AUTH_CONFIG } from '@/config'
 import { useAuthStore } from '@/stores/auth'
 
 type AuthMode = 'login' | 'register'
@@ -76,13 +75,6 @@ async function submit(): Promise<void> {
   } catch {
     // Store exposes the normalized API message beside the form.
   }
-}
-
-function useDemo(): void {
-  mode.value = 'login'
-  form.email = DEMO_ACCOUNT.email
-  form.password = DEMO_ACCOUNT.password
-  touchedEmail.value = true
 }
 </script>
 
@@ -204,14 +196,6 @@ function useDemo(): void {
           <template #icon><ArrowRight :size="18" /></template>
         </BaseButton>
       </form>
-
-      <div class="demo-access">
-        <div>
-          <Image :size="17" />
-          <span>仅查看完整演示</span>
-        </div>
-        <button type="button" @click="useDemo">填入演示账号</button>
-      </div>
 
       <button
         v-if="mode === 'login'"
@@ -425,26 +409,6 @@ form {
   width: 100%;
 }
 
-.demo-access {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 0;
-  margin-top: 20px;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-}
-
-.demo-access div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink-muted);
-}
-
-.demo-access button,
 .forgot {
   min-height: 36px;
   background: transparent;
@@ -455,7 +419,7 @@ form {
 
 .forgot {
   align-self: center;
-  margin-top: 8px;
+  margin-top: 16px;
 }
 
 @media (max-width: 840px) {

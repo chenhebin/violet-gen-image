@@ -22,13 +22,25 @@ import (
 )
 
 const (
-	StatusUnused   = "unused"
-	StatusRedeemed = "redeemed"
-	StatusExpired  = "expired"
-	StatusDisabled = "disabled"
+	StatusUnused       = "unused"
+	StatusRedeemed     = "redeemed"
+	StatusExpired      = "expired"
+	StatusDisabled     = "disabled"
+	BatchNameMaxLength = 60
 )
 
 const codeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+func NormalizeBatchName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", apierror.Invalid("批次名称不能为空", map[string]any{"field": "name"})
+	}
+	if len([]rune(name)) > BatchNameMaxLength {
+		return "", apierror.Invalid("批次名称不能超过 60 个字符", map[string]any{"field": "name"})
+	}
+	return name, nil
+}
 
 type Service struct {
 	db               *gorm.DB
@@ -240,11 +252,15 @@ func (s *Service) CreateBatch(
 	input CreateBatchInput,
 	idempotencyKey string,
 ) (*CreateBatchResult, error) {
-	input.Name = strings.TrimSpace(input.Name)
+	var err error
+	input.Name, err = NormalizeBatchName(input.Name)
+	if err != nil {
+		return nil, err
+	}
 	input.ProductCode = strings.TrimSpace(input.ProductCode)
 	input.Note = strings.TrimSpace(input.Note)
-	if input.Name == "" || input.ProductCode == "" {
-		return nil, apierror.Invalid("批次名称和商品标识不能为空", nil)
+	if input.ProductCode == "" {
+		return nil, apierror.Invalid("商品标识不能为空", nil)
 	}
 	if input.Quantity < 1 || input.Quantity > 500 {
 		return nil, apierror.Invalid("单批兑换码数量必须为 1 到 500", nil)
@@ -258,7 +274,7 @@ func (s *Service) CreateBatch(
 
 	var output CreateBatchResult
 	replayedBatchID := ""
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		recordID, replay, err := idempotency.AcquireTx(tx, idempotency.Scope{
 			PrincipalRealm: "manage",
 			PrincipalID:    input.CreatedBy,

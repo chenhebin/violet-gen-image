@@ -76,13 +76,13 @@ func validateAdminInput(input AdminInput) (AdminInput, error) {
 
 	address, err := mail.ParseAddress(input.Email)
 	if err != nil || address.Address != input.Email || len(input.Email) > 320 {
-		return AdminInput{}, errors.New("BOOTSTRAP_ADMIN_EMAIL must be a valid email address")
+		return AdminInput{}, errors.New("PLATFORM_ADMIN_EMAIL must be a valid email address")
 	}
-	if len(input.Password) < 12 || len(input.Password) > 128 {
-		return AdminInput{}, errors.New("BOOTSTRAP_ADMIN_PASSWORD must contain 12 to 128 characters")
+	if len(input.Password) < 12 || len(input.Password) > 72 {
+		return AdminInput{}, errors.New("PLATFORM_ADMIN_PASSWORD must contain 12 to 72 bytes")
 	}
 	if input.Name == "" || len([]rune(input.Name)) > 100 {
-		return AdminInput{}, errors.New("BOOTSTRAP_ADMIN_NAME must contain 1 to 100 characters")
+		return AdminInput{}, errors.New("PLATFORM_ADMIN_NAME must contain 1 to 100 characters")
 	}
 	return input, nil
 }

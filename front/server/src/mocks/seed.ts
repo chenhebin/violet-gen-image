@@ -1,4 +1,3 @@
-import { DEMO_ACCOUNTS } from '@/config'
 import type {
   ManagedAsset,
   PromptSections,
@@ -11,6 +10,17 @@ import type {
   MockTicket,
 } from '@/mocks/schema'
 import { maskRedemptionCode } from '@/utils/redemption'
+
+const MOCK_ADMIN_ACCOUNTS = {
+  admin: {
+    email: 'admin@yingyan.local',
+    password: 'Admin1234!',
+  },
+  retouch: {
+    email: 'retouch@yingyan.local',
+    password: 'Retouch1234!',
+  },
+} as const
 
 const DAY = 86_400_000
 
@@ -431,8 +441,8 @@ export function createSeedDb(): MockDb {
     admins: [
       {
         id: 'admin_platform',
-        email: DEMO_ACCOUNTS.admin.email,
-        password: DEMO_ACCOUNTS.admin.password,
+        email: MOCK_ADMIN_ACCOUNTS.admin.email,
+        password: MOCK_ADMIN_ACCOUNTS.admin.password,
         name: '映研管理员',
         role: 'platform_admin',
         permissions: ['platform:manage', 'retouch:manage'],
@@ -441,8 +451,8 @@ export function createSeedDb(): MockDb {
       },
       {
         id: 'admin_retouch',
-        email: DEMO_ACCOUNTS.retouch.email,
-        password: DEMO_ACCOUNTS.retouch.password,
+        email: MOCK_ADMIN_ACCOUNTS.retouch.email,
+        password: MOCK_ADMIN_ACCOUNTS.retouch.password,
         name: '修图操作员',
         role: 'retouch_operator',
         permissions: ['retouch:manage'],

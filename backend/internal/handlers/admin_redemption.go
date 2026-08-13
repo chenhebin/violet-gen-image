@@ -40,6 +40,39 @@ func (h *AdminHandler) GetRedemptionBatch(c *gin.Context) {
 	write(c, value, err)
 }
 
+func (h *AdminHandler) UpdateRedemptionBatch(c *gin.Context) {
+	var input struct {
+		Name string `json:"name"`
+	}
+	if !bindJSON(c, &input) {
+		return
+	}
+	batchID := c.Param("batchId")
+	principal, _ := auth.AdminPrincipalFrom(c)
+	value, previousName, err := h.manage.UpdateBatchName(
+		c.Request.Context(),
+		principal.Admin.ID,
+		batchID,
+		input.Name,
+		idempotencyKey(c),
+	)
+	afterName := input.Name
+	if value != nil {
+		afterName = value.Name
+	}
+	h.auditSnapshots(
+		c,
+		"redemption_batch.rename",
+		"redemption_batch",
+		batchID,
+		"",
+		map[string]any{"name": previousName},
+		map[string]any{"name": afterName},
+		err,
+	)
+	write(c, value, err)
+}
+
 func (h *AdminHandler) CreateRedemptionBatch(c *gin.Context) {
 	var input struct {
 		Name           string     `json:"name"`

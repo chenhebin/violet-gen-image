@@ -7,8 +7,9 @@ import {
   MoreHorizontal,
   ShieldOff,
 } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import BasePagination from '@/components/base/BasePagination.vue'
+import { useFloatingActionMenu } from '@/composables/useFloatingActionMenu'
 import type { RedemptionCode } from '@/types'
 import RedemptionStatusBadge from './RedemptionStatusBadge.vue'
 import { formatDate, formatDateTime } from './formatters'
@@ -33,7 +34,8 @@ const emit = defineEmits<{
   extend: [code: RedemptionCode]
 }>()
 
-const openMenuId = ref<string | null>(null)
+const { openMenuId, menuPosition, closeMenu, toggleMenu } =
+  useFloatingActionMenu(122)
 
 const selectableItems = computed(() =>
   props.items.filter((item) => item.status === 'unused'),
@@ -204,39 +206,45 @@ function displayCode(code: RedemptionCode) {
                 <button
                   type="button"
                   aria-label="更多操作"
-                  @click="
-                    openMenuId = openMenuId === code.id ? null : code.id
-                  "
+                  @click="toggleMenu($event, code.id)"
                 >
                   <MoreHorizontal :size="18" aria-hidden="true" />
                 </button>
-                <div
-                  v-if="openMenuId === code.id"
-                  class="menu-popover"
-                  @mouseleave="openMenuId = null"
-                >
-                  <button type="button" @click="emit('detail', code)">
-                    <Eye :size="15" aria-hidden="true" />
-                    查看详情
-                  </button>
-                  <button
-                    v-if="code.status === 'unused' || code.status === 'expired'"
-                    type="button"
-                    @click="emit('extend', code)"
+                <Teleport to="body">
+                  <div
+                    v-if="openMenuId === code.id"
+                    class="menu-popover"
+                    :style="{
+                      top: `${menuPosition.top}px`,
+                      right: `${menuPosition.right}px`,
+                    }"
+                    @mouseleave="closeMenu"
                   >
-                    <CalendarPlus :size="15" aria-hidden="true" />
-                    延长有效期
-                  </button>
-                  <button
-                    v-if="code.status === 'unused'"
-                    type="button"
-                    class="danger"
-                    @click="emit('disable', code)"
-                  >
-                    <ShieldOff :size="15" aria-hidden="true" />
-                    失效兑换码
-                  </button>
-                </div>
+                    <button type="button" @click="emit('detail', code)">
+                      <Eye :size="15" aria-hidden="true" />
+                      查看详情
+                    </button>
+                    <button
+                      v-if="
+                        code.status === 'unused' || code.status === 'expired'
+                      "
+                      type="button"
+                      @click="emit('extend', code)"
+                    >
+                      <CalendarPlus :size="15" aria-hidden="true" />
+                      延长有效期
+                    </button>
+                    <button
+                      v-if="code.status === 'unused'"
+                      type="button"
+                      class="danger"
+                      @click="emit('disable', code)"
+                    >
+                      <ShieldOff :size="15" aria-hidden="true" />
+                      失效兑换码
+                    </button>
+                  </div>
+                </Teleport>
               </div>
             </td>
           </tr>
@@ -266,6 +274,7 @@ function displayCode(code: RedemptionCode) {
 }
 
 .table-scroll {
+  min-height: clamp(300px, calc(100dvh - 500px), 500px);
   overflow-x: auto;
 }
 
@@ -404,10 +413,8 @@ input[type='checkbox'] {
 }
 
 .menu-popover {
-  position: absolute;
-  z-index: 20;
-  top: 32px;
-  right: 0;
+  position: fixed;
+  z-index: 60;
   display: grid;
   width: 148px;
   padding: 5px;
@@ -468,6 +475,10 @@ input[type='checkbox'] {
 }
 
 @media (max-width: 768px) {
+  .table-scroll {
+    min-height: 300px;
+  }
+
   .pagination-row {
     align-items: flex-start;
     flex-direction: column;

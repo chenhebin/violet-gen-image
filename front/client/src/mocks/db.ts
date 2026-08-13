@@ -11,13 +11,17 @@ import type {
   User,
 } from '@/types/domain'
 import {
-  DEMO_ACCOUNT,
   isFinalTaskStatus,
   MOCK_REDEMPTION_CODES,
   RETOUCH_TICKET_CONFIG,
   RETOUCH_TICKET_TIMING,
 } from '@/config'
 import { createId } from '@/utils/id'
+
+const MOCK_DEMO_ACCOUNT = {
+  email: 'demo@yingyan.local',
+  password: 'Demo1234!',
+} as const
 
 interface MockUser extends User {
   password: string
@@ -90,8 +94,8 @@ function createSeed(): MockDb {
   const now = Date.now()
   const demoUser: MockUser = {
     id: userId,
-    email: DEMO_ACCOUNT.email,
-    password: DEMO_ACCOUNT.password,
+    email: MOCK_DEMO_ACCOUNT.email,
+    password: MOCK_DEMO_ACCOUNT.password,
     createdAt: new Date(now - 86_400_000 * 12).toISOString(),
     status: 'active',
   }

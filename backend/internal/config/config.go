@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -10,13 +11,14 @@ import (
 )
 
 type Config struct {
-	App      AppConfig
-	Database DatabaseConfig
-	Storage  StorageConfig
-	Security SecurityConfig
-	Auth     AuthConfig
-	Worker   WorkerConfig
-	Provider ProviderConfig
+	App          AppConfig
+	Database     DatabaseConfig
+	Storage      StorageConfig
+	Security     SecurityConfig
+	Auth         AuthConfig
+	SeedAccounts SeedAccountsConfig
+	Worker       WorkerConfig
+	Provider     ProviderConfig
 }
 
 type AppConfig struct {
@@ -61,7 +63,15 @@ type AuthConfig struct {
 	AdminSessionTTL  time.Duration
 	AdminRememberTTL time.Duration
 	TermsVersion     string
-	AllowDemoSeed    bool
+	AllowAccountSeed bool
+}
+
+type SeedAccountsConfig struct {
+	ClientUserEmail      string
+	ClientUserPassword   string
+	PlatformAdminEmail   string
+	RetouchAdminEmail    string
+	RetouchAdminPassword string
 }
 
 type WorkerConfig struct {
@@ -119,7 +129,14 @@ func Load() (Config, error) {
 			AdminSessionTTL:  durationEnv("ADMIN_SESSION_TTL", 8*time.Hour),
 			AdminRememberTTL: durationEnv("ADMIN_REMEMBER_TTL", 7*24*time.Hour),
 			TermsVersion:     env("TERMS_VERSION", "v0.1"),
-			AllowDemoSeed:    boolEnv("ALLOW_DEMO_SEED", false),
+			AllowAccountSeed: boolEnv("ALLOW_ACCOUNT_SEED", false),
+		},
+		SeedAccounts: SeedAccountsConfig{
+			ClientUserEmail:      strings.ToLower(strings.TrimSpace(os.Getenv("CLIENT_USER_EMAIL"))),
+			ClientUserPassword:   os.Getenv("CLIENT_USER_PASSWORD"),
+			PlatformAdminEmail:   strings.ToLower(strings.TrimSpace(os.Getenv("PLATFORM_ADMIN_EMAIL"))),
+			RetouchAdminEmail:    strings.ToLower(strings.TrimSpace(os.Getenv("RETOUCH_ADMIN_EMAIL"))),
+			RetouchAdminPassword: os.Getenv("RETOUCH_ADMIN_PASSWORD"),
 		},
 		Worker: WorkerConfig{
 			HealthAddr:   env("WORKER_HEALTH_ADDR", ":8081"),
@@ -183,6 +200,44 @@ func (c Config) Validate() error {
 		}
 		if c.Storage.SecretKey == "yingyan_dev_secret" {
 			return errors.New("development object storage credentials cannot be used in production")
+		}
+	}
+	return nil
+}
+
+func (c SeedAccountsConfig) Validate() error {
+	accounts := []struct {
+		emailKey    string
+		email       string
+		passwordKey string
+		password    string
+	}{
+		{"CLIENT_USER_EMAIL", c.ClientUserEmail, "CLIENT_USER_PASSWORD", c.ClientUserPassword},
+		{"PLATFORM_ADMIN_EMAIL", c.PlatformAdminEmail, "", ""},
+		{"RETOUCH_ADMIN_EMAIL", c.RetouchAdminEmail, "RETOUCH_ADMIN_PASSWORD", c.RetouchAdminPassword},
+	}
+
+	seen := make(map[string]string, len(accounts))
+	for _, account := range accounts {
+		if account.email == "" {
+			return fmt.Errorf("%s is required for account seed", account.emailKey)
+		}
+		address, err := mail.ParseAddress(account.email)
+		if err != nil || address.Address != account.email || len(account.email) > 320 {
+			return fmt.Errorf("%s must be a valid email address", account.emailKey)
+		}
+		if previousKey, exists := seen[account.email]; exists {
+			return fmt.Errorf("%s must differ from %s", account.emailKey, previousKey)
+		}
+		seen[account.email] = account.emailKey
+		if account.passwordKey == "" {
+			continue
+		}
+		if account.password == "" {
+			return fmt.Errorf("%s is required for account seed", account.passwordKey)
+		}
+		if len(account.password) < 8 || len(account.password) > 72 {
+			return fmt.Errorf("%s must contain 8 to 72 bytes", account.passwordKey)
 		}
 	}
 	return nil

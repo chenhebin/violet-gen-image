@@ -1,9 +1,10 @@
 COMPOSE := docker compose --env-file .env.deploy -f compose.production.yaml
 
-.PHONY: help deploy deploy-check deploy-build deploy-migrate deploy-bootstrap-admin deploy-up deploy-ps deploy-logs deploy-restart deploy-down
+.PHONY: help deploy deploy-check deploy-build deploy-migrate deploy-account-seed deploy-bootstrap-admin deploy-up deploy-ps deploy-logs deploy-restart deploy-down
 
 help:
 	@echo "make deploy                 Build, migrate and start the production stack"
+	@echo "make deploy-account-seed    Create or update the configured seeded accounts and data"
 	@echo "make deploy-bootstrap-admin Create the first platform admin (one time)"
 	@echo "make deploy-ps              Show container status"
 	@echo "make deploy-logs            Follow application logs"
@@ -22,9 +23,10 @@ deploy-build:
 deploy-migrate:
 	@$(COMPOSE) --profile tools run --rm migrate
 
+deploy-account-seed: deploy-check
+	@$(COMPOSE) --profile tools run --rm seed
+
 deploy-bootstrap-admin: deploy-check
-	@test -n "$$BOOTSTRAP_ADMIN_EMAIL" || (echo "BOOTSTRAP_ADMIN_EMAIL is required" && exit 1)
-	@test -n "$$BOOTSTRAP_ADMIN_PASSWORD" || (echo "BOOTSTRAP_ADMIN_PASSWORD is required" && exit 1)
 	@$(COMPOSE) --profile tools run --rm bootstrap-admin
 
 deploy-up:

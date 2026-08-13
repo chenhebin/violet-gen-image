@@ -58,6 +58,19 @@ func (h *AdminHandler) audit(
 	after any,
 	actionErr error,
 ) {
+	h.auditSnapshots(c, action, resourceType, resourceID, reason, nil, after, actionErr)
+}
+
+func (h *AdminHandler) auditSnapshots(
+	c *gin.Context,
+	action string,
+	resourceType string,
+	resourceID string,
+	reason string,
+	before any,
+	after any,
+	actionErr error,
+) {
 	principal, ok := auth.AdminPrincipalFrom(c)
 	if !ok {
 		return
@@ -74,7 +87,7 @@ func (h *AdminHandler) audit(
 	_ = h.audits.Record(context.WithoutCancel(c.Request.Context()), audit.Entry{
 		AdminID: &adminID, AdminEmail: principal.Admin.Email, AdminRole: principal.Admin.Role,
 		Action: action, ResourceType: resourceType, ResourceID: resourceIDPointer,
-		After: after, Reason: reason, Result: result, RequestID: requestID(c),
+		Before: before, After: after, Reason: reason, Result: result, RequestID: requestID(c),
 		IPAddress: c.ClientIP(), UserAgent: c.Request.UserAgent(),
 	})
 }

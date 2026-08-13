@@ -46,17 +46,6 @@ export const MOCK_CONFIG = {
   latencyMs: 120,
 } as const
 
-export const DEMO_ACCOUNTS = {
-  admin: {
-    email: 'admin@yingyan.local',
-    password: 'Admin1234!',
-  },
-  retouch: {
-    email: 'retouch@yingyan.local',
-    password: 'Retouch1234!',
-  },
-} as const
-
 export const PERMISSIONS = {
   platformManage: 'platform:manage',
   retouchManage: 'retouch:manage',
@@ -71,6 +60,7 @@ export const REDEMPTION_CONFIG = {
   minQuantity: 1,
   maxQuantity: 500,
   minCredits: 1,
+  batchNameMaxLength: 60,
   defaultValidityDays: 90,
   expiringSoonDays: 7,
   codePrefix: 'YY',

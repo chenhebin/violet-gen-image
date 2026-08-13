@@ -30,6 +30,11 @@ Worker <-> PostgreSQL / MinIO / AI 服务商
 
 浏览器只访问一个 HTTPS 域名。用户 Session、管理 Session、API 和签名图片均为同源请求；Client 和管理端都无法读取 AI 服务商 Key 或 MinIO 内部地址。
 
+登录和其他带浏览器 `Origin` 的 API 请求必须从 `PUBLIC_ORIGIN` 对应的 HTTPS 地址发起。
+生产环境会同时启用精确 Origin 校验与 Secure Session Cookie，因此宿主机的
+`http://NAS-IP:端口` 只适合检查页面和 `/healthz`，不能作为登录入口。不要为兼容 HTTP
+内网地址而关闭 `COOKIE_SECURE`；需要登录时统一访问公开的 HTTPS 域名。
+
 ## 首次准备
 
 需要 Docker Engine、Docker Compose v2，以及一个已经完成 HTTPS 的域名。复制部署环境模板：
@@ -51,6 +56,8 @@ openssl rand -hex 32
 填写 `.env.deploy` 时注意：
 
 - `PUBLIC_ORIGIN` 填完整 HTTPS Origin，例如 `https://image.example.com`，末尾不加 `/`。
+- `PUBLIC_ORIGIN` 必须与浏览器地址栏中的协议、域名和端口完全一致；Cloudflare Tunnel
+  使用 `https://img.example.com` 时就不能填写 NAS IP、容器名或 `http://` 地址。
 - 第一项随机值可作为 `POSTGRES_PASSWORD`；它必须与 `DATABASE_URL` 内的密码完全一致。
 - 其余随机值分别用于 `MINIO_SECRET_KEY`、`ENCRYPTION_KEY`、`TOKEN_PEPPER`、`REDEMPTION_PEPPER`，不要复用。
 - `DATABASE_URL` 示例为 `postgres://yingyan:实际密码@postgres:5432/yingyan?sslmode=disable`。
@@ -92,16 +99,38 @@ make deploy-ps
 首次部署需要显式创建唯一的初始平台管理员：
 
 ```bash
-read -r -p "管理员邮箱: " BOOTSTRAP_ADMIN_EMAIL
-read -r -s -p "管理员密码: " BOOTSTRAP_ADMIN_PASSWORD
-echo
-export BOOTSTRAP_ADMIN_EMAIL BOOTSTRAP_ADMIN_PASSWORD
-export BOOTSTRAP_ADMIN_NAME="平台管理员"
 make deploy-bootstrap-admin
-unset BOOTSTRAP_ADMIN_EMAIL BOOTSTRAP_ADMIN_PASSWORD BOOTSTRAP_ADMIN_NAME
 ```
 
-密码要求 12 到 128 位。初始化程序使用数据库事务和锁，并且仅在 `admin_accounts` 为空时成功；已有任意管理员后再次执行会拒绝操作。
+该命令读取 `.env.deploy` 中的 `PLATFORM_ADMIN_EMAIL`、`PLATFORM_ADMIN_PASSWORD` 和
+`PLATFORM_ADMIN_NAME`。密码要求 12 到 72 字节。初始化程序使用数据库事务和锁，并且仅在
+`admin_accounts` 为空时成功；已有任意管理员后再次执行会拒绝操作。创建成功后，从部署配置中
+移除 `PLATFORM_ADMIN_PASSWORD`；后续 Seed 不需要它。
+
+如需创建预设账号和种子数据，在 `.env.deploy` 中临时填写以下变量：
+
+```dotenv
+ALLOW_ACCOUNT_SEED=true
+PLATFORM_ADMIN_EMAIL=
+CLIENT_USER_EMAIL=
+CLIENT_USER_PASSWORD=
+RETOUCH_ADMIN_EMAIL=
+RETOUCH_ADMIN_PASSWORD=
+```
+
+三组邮箱必须有效且互不相同；客户用户和修图管理员密码长度为 8 到 72 字节。先确保
+`PLATFORM_ADMIN_EMAIL` 对应的管理员已通过 `bootstrap-admin` 创建，然后手动执行：
+
+```bash
+make deploy-account-seed
+```
+
+`PLATFORM_ADMIN_*` 对应唯一的平台管理员，Seed 只引用它，不会覆盖其密码；
+`CLIENT_USER_*` 对应客户前端用户；`RETOUCH_ADMIN_*` 对应管理端修图管理员。该命令还会写入
+演示兑换码、演示工作区和占位 AI 服务商，只应在明确需要这些种子数据时运行。同一组邮箱
+再次执行会更新客户用户和修图管理员的密码；已有 Seed 数据后不允许更换客户用户邮箱，
+避免演示数据串到其他账号。执行成功后将 `ALLOW_ACCOUNT_SEED` 改回 `false`，并从部署配置中
+移除 `CLIENT_USER_PASSWORD` 和 `RETOUCH_ADMIN_PASSWORD`。API 和 Worker 不需要任何账号初始化变量。
 
 常用命令：
 

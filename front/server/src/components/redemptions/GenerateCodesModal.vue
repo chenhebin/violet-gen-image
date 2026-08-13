@@ -51,7 +51,11 @@ const defaultExpiry = computed(() => {
 })
 
 const errors = computed(() => ({
-  name: !form.name.trim() ? '请填写批次名称' : '',
+  name: !form.name.trim()
+    ? '请填写批次名称'
+    : Array.from(form.name.trim()).length > REDEMPTION_CONFIG.batchNameMaxLength
+      ? `批次名称不能超过 ${REDEMPTION_CONFIG.batchNameMaxLength} 个字符`
+      : '',
   quantity:
     !Number.isInteger(form.quantity) ||
     form.quantity < REDEMPTION_CONFIG.minQuantity ||
@@ -157,7 +161,7 @@ watch(
         <input
           id="batch-name"
           v-model="form.name"
-          maxlength="60"
+          :maxlength="REDEMPTION_CONFIG.batchNameMaxLength"
           placeholder="例如：暑期人像修图 · 第 02 批"
           @blur="touched.name = true"
         />

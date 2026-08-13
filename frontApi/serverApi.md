@@ -1,10 +1,10 @@
 # 映研平台管理端 API 接口契约
 
-> 文档版本：v0.2  
+> 文档版本：v0.3
 > 面向项目：`front/server` 映研平台管理端  
 > 后端关系：与 `front/client` 共用同一个后端、用户、次数账户和工单数据  
 > 管理接口基础路径：`/api/manage`  
-> 更新时间：2026-07-30
+> 更新时间：2026-08-12
 
 本文档是平台管理端与 Go 后端联调的依据。用户端接口由
 [`clientApi.md`](./clientApi.md) 维护；两个前端必须连接同一个 PostgreSQL
@@ -664,6 +664,7 @@ interface DashboardData {
 | `GET /api/manage/redemption-batches` | `page,pageSize,keyword,productCode` | `PageResult<RedemptionBatch>` | 查询生成批次 |
 | `GET /api/manage/redemption-batches/:batchId` | 路径 ID | `RedemptionBatch` | 查看批次统计 |
 | `POST /api/manage/redemption-batches` | `CreateRedemptionBatchPayload` | `CreateRedemptionBatchResult` | 原子生成 1–500 个兑换码 |
+| `PATCH /api/manage/redemption-batches/:batchId` | `UpdateRedemptionBatchPayload` | `RedemptionBatch` | 修改批次展示名称 |
 | `POST /api/manage/redemption-codes/:codeId/reveal` | 无 | `{ id, fullCode }` | 单次查看未使用完整码 |
 | `POST /api/manage/redemption-batches/:batchId/reveal` | 无 | `{ id, fullCode }[]` | 查看批次内可展示完整码 |
 | `POST /api/manage/redemption-batches/:batchId/export` | 无 | `{ filename, csv }` | 导出批次 CSV |
@@ -672,6 +673,7 @@ interface DashboardData {
 
 ```ts
 interface CreateRedemptionBatchPayload {
+  // 去除首尾空格后为 1-60 个字符。
   name: string
   quantity: number
   creditsPerCode: number
@@ -679,6 +681,11 @@ interface CreateRedemptionBatchPayload {
   expiresAt?: string | null
   neverExpires?: boolean
   note?: string
+}
+
+interface UpdateRedemptionBatchPayload {
+  // 去除首尾空格后为 1-60 个字符。
+  name: string
 }
 
 interface DisableRedemptionPayload {
@@ -704,6 +711,53 @@ interface BulkMutationResult {
 `CreateRedemptionBatchResult` 返回 `batch` 和仅本次响应可见的
 `codes: { id, fullCode, maskedCode }[]`。Reveal、Export 和生成响应必须设置
 `Cache-Control: no-store` 并写敏感读取审计。
+
+批次名称修改约定：
+
+- 只更新批次展示名称，不修改批次内兑换码、每码次数、商品标识或有效期。
+- 写请求必须携带 `Idempotency-Key` 和 `X-CSRF-Token`。
+- 修改成功后，兑换码列表中的 `batchName` 由批次关联数据同步反映新名称。
+- 后端记录 `redemption_batch.rename` 审计事件，并保存修改前后的名称快照。
+- 批次不存在返回 HTTP `404`；名称为空或超过 60 个字符返回 HTTP `400`、错误码 `6001`。
+
+请求示例：
+
+```http
+PATCH /api/manage/redemption-batches/57de370c-49dc-4d58-9cf8-e566c56d3861
+Content-Type: application/json
+X-CSRF-Token: <session csrf token>
+Idempotency-Key: rename-batch-20260812-001
+
+{
+  "name": "八月咸鱼人像修图批次"
+}
+```
+
+成功响应的 `data` 为更新后的完整 `RedemptionBatch`：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "id": "57de370c-49dc-4d58-9cf8-e566c56d3861",
+    "name": "八月咸鱼人像修图批次",
+    "productCode": "yingyan-client",
+    "quantity": 20,
+    "creditsPerCode": 10,
+    "expiresAt": "2026-11-10T15:59:59Z",
+    "neverExpires": false,
+    "createdBy": "eb90bba8-f419-4ba0-856b-7e1fa52fa3f2",
+    "createdAt": "2026-08-12T09:00:00Z",
+    "counts": {
+      "unused": 18,
+      "redeemed": 2,
+      "expired": 0,
+      "disabled": 0
+    },
+    "usageRate": 0.1
+  }
+}
+```
 
 ### 10.3 AI 服务商、模型和平台绑定
 

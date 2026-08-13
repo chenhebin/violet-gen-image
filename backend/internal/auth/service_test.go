@@ -32,14 +32,14 @@ func TestPermissionsForRole(t *testing.T) {
 
 func TestValidateCredentials(t *testing.T) {
 	t.Parallel()
-	email, err := validateCredentials(" DEMO@YINGYAN.LOCAL ", "Demo1234!")
+	email, err := validateCredentials(" PERSON@EXAMPLE.COM ", "valid-password")
 	if err != nil {
 		t.Fatalf("validateCredentials() error = %v", err)
 	}
-	if email != "demo@yingyan.local" {
+	if email != "person@example.com" {
 		t.Fatalf("validateCredentials() email = %q", email)
 	}
-	if _, err := validateCredentials("invalid", "Demo1234!"); err == nil {
+	if _, err := validateCredentials("invalid", "valid-password"); err == nil {
 		t.Fatal("validateCredentials() accepted invalid email")
 	}
 	if _, err := validateCredentials("demo@yingyan.local", "short"); err == nil {

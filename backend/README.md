@@ -28,13 +28,28 @@ curl http://127.0.0.1:8080/health/ready
 迁移和演示数据初始化均为显式命令。API 启动不会自动改表，生产环境也不会注册演示数据
 重置接口。`cmd/seed` 在 `APP_ENV=production` 时默认拒绝执行。
 
-## 演示账号
+## 初始化账号
 
-| 端 | 账号 | 密码 |
+账号初始化不再内置账号或密码。唯一的平台管理员通过 `bootstrap-admin` 创建：
+
+| 角色 | 邮箱变量 | 密码变量 |
 | --- | --- | --- |
-| 用户端 | `demo@yingyan.local` | `Demo1234!` |
-| 平台管理员 | `admin@yingyan.local` | `Admin1234!` |
-| 修图操作员 | `retouch@yingyan.local` | `Retouch1234!` |
+| 平台管理员 | `PLATFORM_ADMIN_EMAIL` | `PLATFORM_ADMIN_PASSWORD` |
+
+`PLATFORM_ADMIN_NAME` 可用于设置平台管理员名称。创建成功后即可从部署配置中移除
+`PLATFORM_ADMIN_PASSWORD`；`seed` 不读取或修改平台管理员密码。
+
+运行 `seed` 时提供三组互不相同的邮箱，其中平台管理员只需提供邮箱：
+
+| 角色 | 邮箱变量 | 密码变量 |
+| --- | --- | --- |
+| 平台管理员 | `PLATFORM_ADMIN_EMAIL` | 不需要 |
+| 客户前端用户 | `CLIENT_USER_EMAIL` | `CLIENT_USER_PASSWORD` |
+| 修图管理员 | `RETOUCH_ADMIN_EMAIL` | `RETOUCH_ADMIN_PASSWORD` |
+
+平台管理员应先通过 `bootstrap-admin` 创建；`seed` 只验证并引用该账号。其余两项密码必须为
+8 到 72 字节；邮箱必须有效且三者不能相同。生产环境执行 `seed`
+还需显式设置 `ALLOW_ACCOUNT_SEED=true`。这些变量只应注入一次性工具容器，不需要配置给 API 或 Worker。
 
 未使用兑换码：`YINGYAN-START-10`、`YINGYAN-PRO-30`。
 

@@ -93,7 +93,29 @@ services:
     profiles: ["tools"]
     <<: *backend-image
     entrypoint: ["/app/seed"]
-    environment: *backend-environment
+    environment:
+      <<: *backend-environment
+      ALLOW_ACCOUNT_SEED: ${ALLOW_ACCOUNT_SEED:-false}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
+      CLIENT_USER_EMAIL: ${CLIENT_USER_EMAIL:-}
+      CLIENT_USER_PASSWORD: ${CLIENT_USER_PASSWORD:-}
+      RETOUCH_ADMIN_EMAIL: ${RETOUCH_ADMIN_EMAIL:-}
+      RETOUCH_ADMIN_PASSWORD: ${RETOUCH_ADMIN_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  bootstrap-admin:
+    profiles: ["tools"]
+    <<: *backend-image
+    entrypoint: ["/app/bootstrap-admin"]
+    environment:
+      <<: *backend-environment
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
+      PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-}
+      PLATFORM_ADMIN_NAME: ${PLATFORM_ADMIN_NAME:-平台管理员}
     depends_on:
       postgres:
         condition: service_healthy

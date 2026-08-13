@@ -3,14 +3,18 @@ package manage
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"yingyan.local/backend/internal/apierror"
+	"yingyan.local/backend/internal/idempotency"
 	"yingyan.local/backend/internal/model"
 	"yingyan.local/backend/internal/redemption"
 )
@@ -191,12 +195,88 @@ func (s *Service) GetBatch(ctx context.Context, batchID string) (*RedemptionBatc
 	var batch model.RedemptionBatch
 	if err := s.db.WithContext(ctx).First(&batch, "id = ?", batchID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, apierror.Invalid("兑换码批次不存在", nil)
+			return nil, apierror.New(http.StatusNotFound, apierror.CodeInvalidInput, "兑换码批次不存在", nil)
 		}
 		return nil, err
 	}
 	value, err := s.batchDTO(ctx, batch)
 	return &value, err
+}
+
+func (s *Service) UpdateBatchName(
+	ctx context.Context,
+	adminID string,
+	batchID string,
+	name string,
+	idempotencyKey string,
+) (*RedemptionBatchDTO, string, error) {
+	var err error
+	name, err = redemption.NormalizeBatchName(name)
+	if err != nil {
+		return nil, "", err
+	}
+
+	previousName := ""
+	responseName := name
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		request := struct {
+			Name string `json:"name"`
+		}{Name: name}
+		recordID, replay, err := idempotency.AcquireTx(tx, idempotency.Scope{
+			PrincipalRealm: "manage",
+			PrincipalID:    adminID,
+			Method:         http.MethodPatch,
+			Path:           "/api/manage/redemption-batches/" + batchID,
+			Key:            idempotencyKey,
+			Request:        request,
+		})
+		if err != nil {
+			return err
+		}
+		if replay != nil {
+			var reference struct {
+				ID           string `json:"id"`
+				PreviousName string `json:"previousName"`
+				Name         string `json:"name"`
+			}
+			if err := json.Unmarshal(replay.Data, &reference); err != nil {
+				return err
+			}
+			previousName = reference.PreviousName
+			responseName = reference.Name
+			return nil
+		}
+
+		var batch model.RedemptionBatch
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&batch, "id = ?", batchID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apierror.New(http.StatusNotFound, apierror.CodeInvalidInput, "兑换码批次不存在", nil)
+			}
+			return err
+		}
+		previousName = batch.Name
+		if previousName != name {
+			if err := tx.Model(&batch).Update("name", name).Error; err != nil {
+				return err
+			}
+		}
+		reference := struct {
+			ID           string `json:"id"`
+			PreviousName string `json:"previousName"`
+			Name         string `json:"name"`
+		}{ID: batch.ID, PreviousName: previousName, Name: name}
+		return idempotency.CompleteTx(
+			tx, recordID, http.StatusOK, 0, "redemption_batch", &batch.ID, reference,
+		)
+	})
+	if err != nil {
+		return nil, previousName, err
+	}
+	value, err := s.GetBatch(ctx, batchID)
+	if value != nil {
+		value.Name = responseName
+	}
+	return value, previousName, err
 }
 
 func (s *Service) RevealBatch(ctx context.Context, batchID string) ([]redemption.GeneratedCode, error) {

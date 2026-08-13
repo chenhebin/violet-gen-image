@@ -155,11 +155,6 @@ export const AUTH_CONFIG = {
   minimumPasswordLength: 8,
 } as const
 
-export const DEMO_ACCOUNT = {
-  email: 'demo@yingyan.local',
-  password: 'Demo1234!',
-} as const
-
 export const MOCK_REDEMPTION_CODES = [
   { code: 'YINGYAN-START-10', credits: 10, state: 'active' },
   { code: 'YINGYAN-PRO-30', credits: 30, state: 'active' },

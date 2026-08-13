@@ -27,9 +27,9 @@ func main() {
 	defer func() { _ = database.Close(db) }()
 
 	admin, err := bootstrap.CreateFirstAdmin(context.Background(), db, bootstrap.AdminInput{
-		Email:    os.Getenv("BOOTSTRAP_ADMIN_EMAIL"),
-		Password: os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
-		Name:     env("BOOTSTRAP_ADMIN_NAME", "平台管理员"),
+		Email:    os.Getenv("PLATFORM_ADMIN_EMAIL"),
+		Password: os.Getenv("PLATFORM_ADMIN_PASSWORD"),
+		Name:     env("PLATFORM_ADMIN_NAME", "平台管理员"),
 	}, cfg.Security.BcryptCost)
 	if err != nil {
 		if errors.Is(err, bootstrap.ErrAdminAlreadyExists) {

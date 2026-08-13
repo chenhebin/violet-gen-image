@@ -2,7 +2,8 @@ import { expect, test, type Page } from '@playwright/test'
 
 async function loginAdmin(page: Page) {
   await page.goto('/manage/login')
-  await page.getByRole('button', { name: '平台管理员' }).click()
+  await page.getByLabel('邮箱').fill('admin@yingyan.local')
+  await page.getByLabel('密码').fill('Admin1234!')
   await page.getByRole('button', { name: '登录管理端' }).click()
   await page.waitForURL(/\/manage\/dashboard/)
 }

@@ -4,10 +4,11 @@ import {
   Download,
   Eye,
   MoreHorizontal,
+  PencilLine,
   ShieldOff,
 } from '@lucide/vue'
-import { ref } from 'vue'
 import BasePagination from '@/components/base/BasePagination.vue'
+import { useFloatingActionMenu } from '@/composables/useFloatingActionMenu'
 import type { RedemptionBatch } from '@/types'
 import { formatDate, formatDateTime, formatPercent } from './formatters'
 
@@ -26,9 +27,11 @@ const emit = defineEmits<{
   export: [batch: RedemptionBatch]
   disable: [batch: RedemptionBatch]
   extend: [batch: RedemptionBatch]
+  rename: [batch: RedemptionBatch]
 }>()
 
-const openMenuId = ref<string | null>(null)
+const { openMenuId, menuPosition, closeMenu, toggleMenu } =
+  useFloatingActionMenu(190)
 </script>
 
 <template>
@@ -124,43 +127,60 @@ const openMenuId = ref<string | null>(null)
                 <button
                   type="button"
                   aria-label="更多操作"
-                  @click="
-                    openMenuId = openMenuId === batch.id ? null : batch.id
-                  "
+                  @click="toggleMenu($event, batch.id)"
                 >
                   <MoreHorizontal :size="18" aria-hidden="true" />
                 </button>
-                <div
-                  v-if="openMenuId === batch.id"
-                  class="menu-popover"
-                  @mouseleave="openMenuId = null"
-                >
-                  <button type="button" @click="emit('detail', batch)">
-                    <Eye :size="15" aria-hidden="true" />
-                    查看批次
-                  </button>
-                  <button
-                    type="button"
-                    :disabled="props.exportingId === batch.id"
-                    @click="emit('export', batch)"
+                <Teleport to="body">
+                  <div
+                    v-if="openMenuId === batch.id"
+                    class="menu-popover"
+                    :style="{
+                      top: `${menuPosition.top}px`,
+                      right: `${menuPosition.right}px`,
+                    }"
+                    @mouseleave="closeMenu"
                   >
-                    <Download :size="15" aria-hidden="true" />
-                    导出未使用码
-                  </button>
-                  <button type="button" @click="emit('extend', batch)">
-                    <CalendarPlus :size="15" aria-hidden="true" />
-                    批量延期
-                  </button>
-                  <button
-                    type="button"
-                    class="danger"
-                    :disabled="batch.counts.unused === 0"
-                    @click="emit('disable', batch)"
-                  >
-                    <ShieldOff :size="15" aria-hidden="true" />
-                    失效未使用码
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      @click="closeMenu(); emit('detail', batch)"
+                    >
+                      <Eye :size="15" aria-hidden="true" />
+                      查看批次
+                    </button>
+                    <button
+                      type="button"
+                      @click="closeMenu(); emit('rename', batch)"
+                    >
+                      <PencilLine :size="15" aria-hidden="true" />
+                      修改批次名称
+                    </button>
+                    <button
+                      type="button"
+                      :disabled="props.exportingId === batch.id"
+                      @click="closeMenu(); emit('export', batch)"
+                    >
+                      <Download :size="15" aria-hidden="true" />
+                      导出未使用码
+                    </button>
+                    <button
+                      type="button"
+                      @click="closeMenu(); emit('extend', batch)"
+                    >
+                      <CalendarPlus :size="15" aria-hidden="true" />
+                      批量延期
+                    </button>
+                    <button
+                      type="button"
+                      class="danger"
+                      :disabled="batch.counts.unused === 0"
+                      @click="closeMenu(); emit('disable', batch)"
+                    >
+                      <ShieldOff :size="15" aria-hidden="true" />
+                      失效未使用码
+                    </button>
+                  </div>
+                </Teleport>
               </div>
             </td>
           </tr>
@@ -189,6 +209,7 @@ const openMenuId = ref<string | null>(null)
 }
 
 .table-scroll {
+  min-height: clamp(300px, calc(100dvh - 470px), 500px);
   overflow-x: auto;
 }
 
@@ -345,12 +366,10 @@ td small {
 }
 
 .menu-popover {
-  position: absolute;
-  z-index: 20;
-  top: 32px;
-  right: 0;
+  position: fixed;
+  z-index: 60;
   display: grid;
-  width: 158px;
+  width: 190px;
   padding: 5px;
   background: #fff;
   border: 1px solid var(--color-border, #dce1df);
@@ -414,6 +433,10 @@ td small {
 }
 
 @media (max-width: 768px) {
+  .table-scroll {
+    min-height: 300px;
+  }
+
   .pagination-row {
     align-items: flex-start;
     flex-direction: column;

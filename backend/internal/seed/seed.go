@@ -19,15 +19,6 @@ import (
 	"yingyan.local/backend/internal/storage"
 )
 
-const (
-	DemoUserEmail    = "demo@yingyan.local"
-	DemoUserPassword = "Demo1234!"
-	AdminEmail       = "admin@yingyan.local"
-	AdminPassword    = "Admin1234!"
-	RetouchEmail     = "retouch@yingyan.local"
-	RetouchPassword  = "Retouch1234!"
-)
-
 type demoCode struct {
 	value   string
 	credits int
@@ -41,24 +32,30 @@ func Run(
 	cfg config.Config,
 	logger *slog.Logger,
 ) error {
-	if strings.EqualFold(cfg.App.Env, "production") && !cfg.Auth.AllowDemoSeed {
-		return errors.New("demo seed is disabled in production; set ALLOW_DEMO_SEED=true only for an intentional disposable environment")
+	if strings.EqualFold(cfg.App.Env, "production") && !cfg.Auth.AllowAccountSeed {
+		return errors.New("account seed is disabled in production; set ALLOW_ACCOUNT_SEED=true only for an intentional seeded environment")
+	}
+	if err := cfg.SeedAccounts.Validate(); err != nil {
+		return err
 	}
 
-	passwords, err := hashPasswords(cfg.Security.BcryptCost)
+	passwords, err := hashPasswords(cfg.SeedAccounts, cfg.Security.BcryptCost)
 	if err != nil {
 		return err
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		user, err := upsertUser(tx, cfg, passwords[DemoUserEmail])
+		if err := validateSeedIdentity(tx, cfg.SeedAccounts.ClientUserEmail); err != nil {
+			return err
+		}
+		user, err := upsertUser(tx, cfg, cfg.SeedAccounts.ClientUserEmail, passwords.user)
 		if err != nil {
 			return err
 		}
-		admin, err := upsertAdmin(tx, AdminEmail, "平台管理员", model.AdminRolePlatformAdmin, passwords[AdminEmail])
+		admin, err := requirePlatformAdmin(tx, cfg.SeedAccounts.PlatformAdminEmail)
 		if err != nil {
 			return err
 		}
-		if _, err := upsertAdmin(tx, RetouchEmail, "修图操作员", model.AdminRoleRetouchOperator, passwords[RetouchEmail]); err != nil {
+		if _, err := upsertAdmin(tx, cfg.SeedAccounts.RetouchAdminEmail, "修图操作员", model.AdminRoleRetouchOperator, passwords.retouch); err != nil {
 			return err
 		}
 		account, err := ensureCreditAccount(tx, user.ID)
@@ -75,39 +72,82 @@ func Run(
 		if err := seedDemoWorkspace(ctx, tx, store, user, admin, provider); err != nil {
 			return err
 		}
-		logger.Info("demo_seed_complete",
-			"user", DemoUserEmail,
-			"admin", AdminEmail,
-			"retouch_operator", RetouchEmail,
+		logger.Info("account_seed_complete",
+			"user", cfg.SeedAccounts.ClientUserEmail,
+			"admin", cfg.SeedAccounts.PlatformAdminEmail,
+			"retouch_operator", cfg.SeedAccounts.RetouchAdminEmail,
 			"redemption_codes", 5,
 		)
 		return nil
 	})
 }
 
-func hashPasswords(cost int) (map[string]string, error) {
-	source := map[string]string{
-		DemoUserEmail: DemoUserPassword,
-		AdminEmail:    AdminPassword,
-		RetouchEmail:  RetouchPassword,
-	}
-	result := make(map[string]string, len(source))
-	for email, password := range source {
-		hash, err := bcrypt.GenerateFromPassword([]byte(password), cost)
-		if err != nil {
-			return nil, fmt.Errorf("hash demo password: %w", err)
-		}
-		result[email] = string(hash)
-	}
-	return result, nil
+type passwordHashes struct {
+	user    string
+	retouch string
 }
 
-func upsertUser(db *gorm.DB, cfg config.Config, passwordHash string) (model.User, error) {
+func hashPasswords(credentials config.SeedAccountsConfig, cost int) (passwordHashes, error) {
+	source := []string{
+		credentials.ClientUserPassword,
+		credentials.RetouchAdminPassword,
+	}
+	result := make([]string, len(source))
+	for index, password := range source {
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), cost)
+		if err != nil {
+			return passwordHashes{}, fmt.Errorf("hash seeded account password: %w", err)
+		}
+		result[index] = string(hash)
+	}
+	return passwordHashes{user: result[0], retouch: result[1]}, nil
+}
+
+func validateSeedIdentity(db *gorm.DB, configuredEmail string) error {
+	var seededAsset model.Asset
+	err := db.Where("object_key = ?", "demo/source-portrait.png").First(&seededAsset).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if seededAsset.OwnerUserID == nil {
+		return errors.New("existing seeded workspace has no owner; refusing to change the seeded client account")
+	}
+	var owner model.User
+	if err := db.First(&owner, "id = ?", *seededAsset.OwnerUserID).Error; err != nil {
+		return fmt.Errorf("load existing seeded client account: %w", err)
+	}
+	if !strings.EqualFold(owner.Email, configuredEmail) {
+		return fmt.Errorf("CLIENT_USER_EMAIL must remain %q for the existing seeded workspace", owner.Email)
+	}
+	return nil
+}
+
+func requirePlatformAdmin(db *gorm.DB, email string) (model.AdminAccount, error) {
+	var admin model.AdminAccount
+	if err := db.Where("email = ?", email).First(&admin).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.AdminAccount{}, errors.New("PLATFORM_ADMIN_EMAIL must identify an existing platform administrator; run bootstrap-admin first")
+		}
+		return model.AdminAccount{}, err
+	}
+	if admin.Role != model.AdminRolePlatformAdmin {
+		return model.AdminAccount{}, errors.New("PLATFORM_ADMIN_EMAIL does not identify a platform administrator")
+	}
+	if admin.Status != model.UserStatusActive {
+		return model.AdminAccount{}, errors.New("PLATFORM_ADMIN_EMAIL identifies a disabled platform administrator")
+	}
+	return admin, nil
+}
+
+func upsertUser(db *gorm.DB, cfg config.Config, email, passwordHash string) (model.User, error) {
 	var user model.User
-	err := db.Where("email = ?", DemoUserEmail).First(&user).Error
+	err := db.Where("email = ?", email).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		user = model.User{
-			Email: DemoUserEmail, PasswordHash: passwordHash, Status: model.UserStatusActive,
+			Email: email, PasswordHash: passwordHash, Status: model.UserStatusActive,
 			TermsVersion: cfg.Auth.TermsVersion, TermsAcceptedAt: time.Now().UTC(),
 		}
 		err = db.Create(&user).Error
@@ -129,6 +169,9 @@ func upsertAdmin(db *gorm.DB, email, name, role, passwordHash string) (model.Adm
 		}
 		err = db.Create(&admin).Error
 	} else if err == nil {
+		if admin.Role != role {
+			return model.AdminAccount{}, fmt.Errorf("administrator %q already exists with role %q; refusing to change it to %q", email, admin.Role, role)
+		}
 		err = db.Model(&admin).Updates(map[string]any{
 			"name": name, "role": role, "password_hash": passwordHash,
 			"status": model.UserStatusActive, "password_reset_required": false,

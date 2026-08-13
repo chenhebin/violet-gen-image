@@ -37,7 +37,7 @@ func main() {
 	}
 
 	if err := seed.Run(ctx, db, store, cfg, logger); err != nil {
-		logger.Error("demo_seed_failed", "error", err)
+		logger.Error("account_seed_failed", "error", err)
 		os.Exit(1)
 	}
 }

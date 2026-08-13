@@ -4,7 +4,6 @@ import { Eye, EyeOff, LockKeyhole, ShieldCheck } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import BaseButton from '@/components/base/BaseButton.vue'
 import FormField from '@/components/base/FormField.vue'
-import { DEMO_ACCOUNTS } from '@/config'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -24,14 +23,6 @@ const errors = computed(() => ({
     : '',
   password: form.password.length < 8 ? '密码至少需要 8 位' : '',
 }))
-
-function fillDemo(role: 'admin' | 'retouch'): void {
-  form.email = DEMO_ACCOUNTS[role].email
-  form.password = DEMO_ACCOUNTS[role].password
-  touched.email = false
-  touched.password = false
-  auth.clearError()
-}
 
 function safeRedirect(): string {
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
@@ -150,18 +141,6 @@ async function submit(): Promise<void> {
             登录管理端
           </BaseButton>
         </form>
-
-        <div class="demo-accounts">
-          <p>演示账号</p>
-          <button type="button" @click="fillDemo('admin')">
-            <span>平台管理员</span>
-            <small>完整运营权限</small>
-          </button>
-          <button type="button" @click="fillDemo('retouch')">
-            <span>修图操作员</span>
-            <small>仅工单处理权限</small>
-          </button>
-        </div>
       </div>
       <p class="login-panel__footnote">
         管理操作会记录账号、对象、结果与请求追踪信息。
@@ -386,50 +365,6 @@ async function submit(): Promise<void> {
   font-size: 12px;
 }
 
-.demo-accounts {
-  display: grid;
-  margin-top: 26px;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.demo-accounts > p {
-  grid-column: 1 / -1;
-  color: var(--ink-faint);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.demo-accounts button {
-  min-height: 58px;
-  padding: 9px 11px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  text-align: left;
-}
-
-.demo-accounts button:hover {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-}
-
-.demo-accounts span,
-.demo-accounts small {
-  display: block;
-}
-
-.demo-accounts span {
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.demo-accounts small {
-  margin-top: 2px;
-  color: var(--ink-muted);
-  font-size: 10px;
-}
-
 .login-panel__footnote {
   margin-top: 24px;
   color: var(--ink-faint);
@@ -479,10 +414,6 @@ async function submit(): Promise<void> {
   .login-form {
     gap: 12px;
     margin-top: 20px;
-  }
-
-  .demo-accounts {
-    margin-top: 18px;
   }
 }
 </style>

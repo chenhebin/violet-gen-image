@@ -1,5 +1,12 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import path from 'node:path'
+
+async function loginDemoUser(page: Page): Promise<void> {
+  await page.goto('/auth')
+  await page.getByLabel('邮箱').fill('demo@yingyan.local')
+  await page.getByLabel('密码', { exact: true }).fill('Demo1234!')
+  await page.getByRole('button', { name: '进入工作台' }).click()
+}
 
 test('auth stays inside the viewport on desktop', async ({ page }) => {
   for (const viewport of [
@@ -89,9 +96,7 @@ test('register, redeem and complete a same-page creation flow', async ({
 test('completes a text-only generation without uploading an image', async ({
   page,
 }) => {
-  await page.goto('/auth')
-  await page.getByRole('button', { name: '填入演示账号' }).click()
-  await page.getByRole('button', { name: '进入工作台' }).click()
+  await loginDemoUser(page)
 
   await expect(page.getByRole('radio', { name: '图生图' })).toHaveCount(0)
   await expect(page.getByRole('radio', { name: '文生图' })).toHaveCount(0)
@@ -111,9 +116,7 @@ test('workspace stays usable at the configured viewport', async (
   { page },
   testInfo,
 ) => {
-  await page.goto('/auth')
-  await page.getByRole('button', { name: '填入演示账号' }).click()
-  await page.getByRole('button', { name: '进入工作台' }).click()
+  await loginDemoUser(page)
   await expect(page.getByRole('heading', { name: '完成一次影像创作' })).toBeVisible()
   await expect(page.getByText('影像校样条')).toBeVisible()
   await expect(page.getByText('成片校样台')).toBeVisible()
@@ -127,9 +130,7 @@ test('workspace stays usable at the configured viewport', async (
 test('submit and complete a human retouch ticket from task records', async ({
   page,
 }, testInfo) => {
-  await page.goto('/auth')
-  await page.getByRole('button', { name: '填入演示账号' }).click()
-  await page.getByRole('button', { name: '进入工作台' }).click()
+  await loginDemoUser(page)
   await page.getByRole('link', { name: '任务记录' }).click()
 
   await page.getByText('自然光人像精修', { exact: true }).first().click()
@@ -267,9 +268,7 @@ test('submit and complete a human retouch ticket from task records', async ({
 test('workspace remains coherent across responsive breakpoints', async ({
   page,
 }, testInfo) => {
-  await page.goto('/auth')
-  await page.getByRole('button', { name: '填入演示账号' }).click()
-  await page.getByRole('button', { name: '进入工作台' }).click()
+  await loginDemoUser(page)
   await expect(
     page.getByRole('heading', { name: '完成一次影像创作' }),
   ).toBeVisible()

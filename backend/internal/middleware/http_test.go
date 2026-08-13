@@ -28,17 +28,40 @@ func TestRequestID(t *testing.T) {
 func TestCORSRejectsUnknownOrigin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(RequestID(), CORS([]string{"http://localhost:5173"}))
-	router.GET("/", func(c *gin.Context) {
+	router.Use(RequestID(), CORS([]string{"https://img.daidaiweb.cn"}))
+	router.POST("/api/auth/login", func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})
 
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	request.Header.Set("Origin", "https://evil.example")
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	request.Header.Set("Origin", "http://192.168.0.104:4005")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+}
+
+func TestCORSAllowsConfiguredPublicOrigin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(RequestID(), CORS([]string{"https://img.daidaiweb.cn"}))
+	router.POST("/api/auth/login", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
+	request.Header.Set("Origin", "https://img.daidaiweb.cn")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "https://img.daidaiweb.cn" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q", got)
 	}
 }
 
