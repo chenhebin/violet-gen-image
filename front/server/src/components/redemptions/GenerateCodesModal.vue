@@ -25,6 +25,7 @@ const emit = defineEmits<{
   submit: [payload: CreateRedemptionBatchPayload]
   copy: [value: string, label: string]
   export: [batchId: string]
+  exportXianyu: [batchId: string]
 }>()
 
 const form = reactive({
@@ -139,6 +140,7 @@ watch(
       :exporting="props.exporting"
       @copy="(value, label) => emit('copy', value, label)"
       @export="(batchId) => emit('export', batchId)"
+      @export-xianyu="(batchId) => emit('exportXianyu', batchId)"
       @done="emit('close')"
     />
 

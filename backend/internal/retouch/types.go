@@ -31,9 +31,19 @@ type TimelineEntry struct {
 }
 
 type QuoteDTO struct {
-	ID        string    `json:"id"`
-	Credits   int       `json:"credits"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID               string    `json:"id"`
+	Credits          int       `json:"credits"`
+	CreatedAt        time.Time `json:"createdAt"`
+	Status           string    `json:"status"`
+	ExpiresAt        time.Time `json:"expiresAt"`
+	RemainingSeconds int64     `json:"remainingSeconds"`
+}
+
+type SLA struct {
+	Stage            string     `json:"stage"`
+	DueAt            *time.Time `json:"dueAt"`
+	Overdue          bool       `json:"overdue"`
+	RemainingSeconds *int64     `json:"remainingSeconds"`
 }
 
 type RevisionDTO struct {
@@ -57,8 +67,17 @@ type TicketDTO struct {
 	RefundedCredits    int                    `json:"refundedCredits"`
 	Revision           *RevisionDTO           `json:"revision,omitempty"`
 	Deliverables       []generation.ResultDTO `json:"deliverables"`
+	SLA                SLA                    `json:"sla"`
 	CreatedAt          time.Time              `json:"createdAt"`
 	UpdatedAt          time.Time              `json:"updatedAt"`
+}
+
+type TicketPage struct {
+	Items    []TicketDTO `json:"items"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"pageSize"`
+	Total    int64       `json:"total"`
+	HasMore  bool        `json:"hasMore"`
 }
 
 type SummaryDTO struct {
@@ -70,6 +89,7 @@ type SummaryDTO struct {
 	QuoteCredits *int      `json:"quoteCredits,omitempty"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
+	SLA          SLA       `json:"sla"`
 }
 
 type UserSummary struct {

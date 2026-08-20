@@ -156,25 +156,36 @@ async function copy(value: string, label = '完整兑换码') {
   }
 }
 
-async function exportBatch(batch: RedemptionBatch | string) {
+async function downloadBatch(
+  batch: RedemptionBatch | string,
+  format: 'csv' | 'xianyu',
+) {
   const batchId = typeof batch === 'string' ? batch : batch.id
   exportingId.value = batchId
   try {
-    const file = await store.exportBatch(batchId)
+    const file = await store.exportBatch(batchId, format)
     const url = URL.createObjectURL(
-      new Blob([file.csv], { type: 'text/csv;charset=utf-8' }),
+      new Blob([file.content || file.csv || ''], { type: file.mediaType }),
     )
     const anchor = document.createElement('a')
     anchor.href = url
     anchor.download = file.filename
     anchor.click()
     URL.revokeObjectURL(url)
-    toast.success('CSV 已生成并开始下载')
+    toast.success(format === 'xianyu' ? '闲鱼库存已生成并开始下载' : 'CSV 已生成并开始下载')
   } catch (error) {
     toast.error({ title: '导出失败', message: errorText(error) })
   } finally {
     exportingId.value = null
   }
+}
+
+function exportBatch(batch: RedemptionBatch | string) {
+  return downloadBatch(batch, 'csv')
+}
+
+function exportXianyu(batch: RedemptionBatch | string) {
+  return downloadBatch(batch, 'xianyu')
 }
 
 async function confirmDisable(reason: string) {
@@ -313,6 +324,7 @@ onBeforeUnmount(store.clearSensitiveValues)
       @update:page="changePage"
       @detail="openDetail"
       @export="exportBatch"
+      @export-xianyu="exportXianyu"
       @disable="disableBatch = $event"
       @extend="extendBatch = $event"
       @rename="renameBatch = $event"
@@ -328,6 +340,7 @@ onBeforeUnmount(store.clearSensitiveValues)
     @submit="createBatch"
     @copy="copy"
     @export="exportBatch"
+    @export-xianyu="exportXianyu"
   />
 
   <RedemptionBatchDrawer
@@ -343,6 +356,7 @@ onBeforeUnmount(store.clearSensitiveValues)
     @reveal-all="revealAll"
     @copy="copy"
     @export="exportBatch"
+    @export-xianyu="exportXianyu"
     @disable="disableBatch = $event"
     @extend="extendBatch = $event"
   />

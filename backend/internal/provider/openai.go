@@ -137,17 +137,30 @@ func (a *OpenAICompatible) OptimizePrompt(ctx context.Context, request OptimizeP
 		Stream:      false,
 	}
 	var response chatResponse
-	requestID, err := a.doJSON(ctx, "optimize_prompt", http.MethodPost, "/v1/chat/completions", payload, &response)
+	metadata, err := a.doJSON(ctx, "optimize_prompt", http.MethodPost, "/v1/chat/completions", payload, &response)
+	metadata.Model = request.Model
+	metadata.ParameterSummary = map[string]any{
+		"promptLength":           len([]rune(request.Prompt)),
+		"imageCount":             len(request.ImageDataURLs),
+		"systemPromptConfigured": strings.TrimSpace(request.SystemPrompt) != "",
+		"temperatureConfigured":  request.Temperature != nil,
+		"maxTokensConfigured":    request.MaxTokens > 0,
+	}
 	if err != nil {
+		attachMetadata(err, metadata)
 		return PromptResult{}, err
 	}
 	if len(response.Choices) == 0 || strings.TrimSpace(response.Choices[0].Message.Content) == "" {
-		return PromptResult{}, newError(ErrorInvalidResponse, "optimize_prompt", errors.New("provider returned no message"))
+		return PromptResult{}, withMetadata(
+			newError(ErrorInvalidResponse, "optimize_prompt", errors.New("provider returned no message")),
+			metadata,
+		)
 	}
 	return PromptResult{
-		Content:   response.Choices[0].Message.Content,
-		Model:     response.Model,
-		RequestID: requestID,
+		Content:        response.Choices[0].Message.Content,
+		Model:          response.Model,
+		RequestID:      metadata.RequestID,
+		RequestSummary: metadata,
 		Usage: Usage{
 			PromptTokens:     response.Usage.PromptTokens,
 			CompletionTokens: response.Usage.CompletionTokens,
@@ -169,11 +182,21 @@ func (a *OpenAICompatible) GenerateTextToImage(ctx context.Context, request Text
 		Style:   request.Style,
 	}
 	var response imageResponse
-	requestID, err := a.doJSON(ctx, "generate_image", http.MethodPost, "/v1/images/generations", payload, &response)
+	metadata, err := a.doJSON(ctx, "generate_image", http.MethodPost, "/v1/images/generations", payload, &response)
+	metadata.Model = request.Model
+	metadata.ParameterSummary = map[string]any{
+		"promptLength":          len([]rune(request.Prompt)),
+		"outputCount":           request.OutputCount,
+		"multiOutputConfigured": request.OutputCount > 1,
+		"sizeConfigured":        strings.TrimSpace(request.Size) != "",
+		"qualityConfigured":     strings.TrimSpace(request.Quality) != "",
+		"styleConfigured":       strings.TrimSpace(request.Style) != "",
+	}
 	if err != nil {
+		attachMetadata(err, metadata)
 		return nil, err
 	}
-	return a.parseImages(ctx, "generate_image", requestID, response)
+	return a.parseImages(ctx, "generate_image", metadata, response)
 }
 
 func (a *OpenAICompatible) GenerateImageToImage(ctx context.Context, request ImageToImageRequest) ([]GeneratedImage, error) {
@@ -208,28 +231,39 @@ func (a *OpenAICompatible) GenerateImageToImage(ctx context.Context, request Ima
 		a.maxRequestBytes,
 	)
 	var response imageResponse
-	requestID, err := a.doStream(ctx, "edit_image", "/v1/images/edits", bodyReader, contentType, &response)
+	metadata, err := a.doStream(ctx, "edit_image", "/v1/images/edits", bodyReader, contentType, &response)
+	metadata.Model = request.Model
+	metadata.ParameterSummary = map[string]any{
+		"promptLength":      len([]rune(request.Prompt)),
+		"imageCount":        len(request.Images),
+		"outputCount":       request.OutputCount,
+		"sizeConfigured":    strings.TrimSpace(request.Size) != "",
+		"qualityConfigured": strings.TrimSpace(request.Quality) != "",
+	}
 	writerErr := <-writerErrors
 	if err != nil {
+		attachMetadata(err, metadata)
 		return nil, err
 	}
 	if writerErr != nil {
 		return nil, newError(ErrorInvalidRequest, "edit_image", writerErr)
 	}
-	return a.parseImages(ctx, "edit_image", requestID, response)
+	return a.parseImages(ctx, "edit_image", metadata, response)
 }
 
 func (a *OpenAICompatible) TestConnection(ctx context.Context) (ConnectionTestResult, error) {
 	startedAt := time.Now()
 	var response modelsResponse
-	requestID, err := a.doJSON(ctx, "test_connection", http.MethodGet, "/v1/models", nil, &response)
+	metadata, err := a.doJSON(ctx, "test_connection", http.MethodGet, "/v1/models", nil, &response)
 	if err != nil {
+		attachMetadata(err, metadata)
 		return ConnectionTestResult{}, err
 	}
 	return ConnectionTestResult{
-		Latency:    time.Since(startedAt),
-		RequestID:  requestID,
-		ModelCount: len(response.Data),
+		Latency:        time.Since(startedAt),
+		RequestID:      metadata.RequestID,
+		ModelCount:     len(response.Data),
+		RequestSummary: metadata,
 	}, nil
 }
 
@@ -247,14 +281,14 @@ func (a *OpenAICompatible) TestModel(ctx context.Context, request ModelTestReque
 			prompt = "Reply with OK."
 		}
 		response, err := a.OptimizePrompt(ctx, OptimizePromptRequest{
-			Model:     request.Model,
-			Prompt:    prompt,
-			MaxTokens: 8,
+			Model:  request.Model,
+			Prompt: prompt,
 		})
 		if err != nil {
 			return ModelTestResult{}, err
 		}
 		result.RequestID = response.RequestID
+		result.RequestSummary = response.RequestSummary
 	case ModelTypeImage:
 		if prompt == "" {
 			prompt = "A simple black square centered on a white background."
@@ -269,6 +303,9 @@ func (a *OpenAICompatible) TestModel(ctx context.Context, request ModelTestReque
 				return ModelTestResult{}, err
 			}
 			result.RequestID = firstRequestID(images)
+			if len(images) > 0 {
+				result.RequestSummary = images[0].RequestSummary
+			}
 		} else {
 			images, err := a.GenerateImageToImage(ctx, ImageToImageRequest{
 				Model:       request.Model,
@@ -280,6 +317,9 @@ func (a *OpenAICompatible) TestModel(ctx context.Context, request ModelTestReque
 				return ModelTestResult{}, err
 			}
 			result.RequestID = firstRequestID(images)
+			if len(images) > 0 {
+				result.RequestSummary = images[0].RequestSummary
+			}
 		}
 	default:
 		return ModelTestResult{}, newError(ErrorInvalidRequest, "test_model", errors.New("unsupported model type"))
@@ -295,21 +335,21 @@ func (a *OpenAICompatible) doJSON(
 	endpoint string,
 	payload any,
 	output any,
-) (string, error) {
+) (CallMetadata, error) {
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
 		if err != nil {
-			return "", newError(ErrorInvalidRequest, operation, err)
+			return CallMetadata{Operation: operation, Method: method, Path: endpoint}, newError(ErrorInvalidRequest, operation, err)
 		}
 		if int64(len(encoded)) > a.maxRequestBytes {
-			return "", newError(ErrorInvalidRequest, operation, errors.New("request body is too large"))
+			return CallMetadata{Operation: operation, Method: method, Path: endpoint}, newError(ErrorInvalidRequest, operation, errors.New("request body is too large"))
 		}
 		body = bytes.NewReader(encoded)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, a.endpoint(endpoint), body)
 	if err != nil {
-		return "", newError(ErrorInvalidRequest, operation, err)
+		return CallMetadata{Operation: operation, Method: method, Path: endpoint}, newError(ErrorInvalidRequest, operation, err)
 	}
 	if payload != nil {
 		request.Header.Set("Content-Type", "application/json")
@@ -324,19 +364,28 @@ func (a *OpenAICompatible) doStream(
 	body io.Reader,
 	contentType string,
 	output any,
-) (string, error) {
+) (CallMetadata, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint(endpoint), body)
 	if err != nil {
-		return "", newError(ErrorInvalidRequest, operation, err)
+		return CallMetadata{Operation: operation, Method: http.MethodPost, Path: endpoint}, newError(ErrorInvalidRequest, operation, err)
 	}
 	defer request.Body.Close()
 	request.Header.Set("Content-Type", contentType)
 	return a.execute(operation, request, output)
 }
 
-func (a *OpenAICompatible) execute(operation string, request *http.Request, output any) (string, error) {
+func (a *OpenAICompatible) execute(operation string, request *http.Request, output any) (CallMetadata, error) {
+	startedAt := time.Now()
+	metadata := CallMetadata{Operation: operation, Method: request.Method, Path: request.URL.Path}
+	finish := func(err error) (CallMetadata, error) {
+		metadata.LatencyMillis = time.Since(startedAt).Milliseconds()
+		if err != nil {
+			attachMetadata(err, metadata)
+		}
+		return metadata, err
+	}
 	if err := validateResolvedTarget(request.Context(), request.URL, a.policy); err != nil {
-		return "", newError(ErrorUnsafeURL, operation, err)
+		return finish(newError(ErrorUnsafeURL, operation, err))
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", "Bearer "+a.apiKey)
@@ -344,7 +393,7 @@ func (a *OpenAICompatible) execute(operation string, request *http.Request, outp
 
 	response, err := a.client.Do(request)
 	if err != nil {
-		return "", classifyTransportError(operation, err)
+		return finish(classifyTransportError(operation, err))
 	}
 	defer response.Body.Close()
 
@@ -352,26 +401,28 @@ func (a *OpenAICompatible) execute(operation string, request *http.Request, outp
 	if requestID == "" {
 		requestID = response.Header.Get("Request-Id")
 	}
+	metadata.RequestID = requestID
+	metadata.Status = response.StatusCode
 	body, err := readLimited(response.Body, a.maxResponseBytes)
 	if err != nil {
-		return "", newError(ErrorResponseTooLarge, operation, err)
+		return finish(newError(ErrorResponseTooLarge, operation, err))
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return "", parseProviderHTTPError(operation, response.StatusCode, body)
+		return finish(parseProviderHTTPError(operation, response.StatusCode, body))
 	}
 	if output == nil {
-		return requestID, nil
+		return finish(nil)
 	}
 	if err := json.Unmarshal(body, output); err != nil {
-		return "", newError(ErrorInvalidResponse, operation, err)
+		return finish(newError(ErrorInvalidResponse, operation, err))
 	}
-	return requestID, nil
+	return finish(nil)
 }
 
 func (a *OpenAICompatible) parseImages(
 	ctx context.Context,
 	operation string,
-	requestID string,
+	metadata CallMetadata,
 	response imageResponse,
 ) ([]GeneratedImage, error) {
 	if len(response.Data) == 0 {
@@ -383,29 +434,34 @@ func (a *OpenAICompatible) parseImages(
 		case strings.TrimSpace(item.Base64JSON) != "":
 			data, contentType, err := decodeImage(item.Base64JSON, a.maxImageBytes)
 			if err != nil {
-				return nil, newError(ErrorInvalidResponse, operation, err)
+				return nil, withMetadata(newError(ErrorInvalidResponse, operation, err), metadata)
 			}
 			images = append(images, GeneratedImage{
-				Data:          data,
-				ContentType:   contentType,
-				RevisedPrompt: item.RevisedPrompt,
-				Source:        ImageSourceBase64,
-				RequestID:     requestID,
+				Data:           data,
+				ContentType:    contentType,
+				RevisedPrompt:  item.RevisedPrompt,
+				Source:         ImageSourceBase64,
+				RequestID:      metadata.RequestID,
+				RequestSummary: metadata,
 			})
 		case strings.TrimSpace(item.URL) != "":
 			data, contentType, err := a.fetchImage(ctx, item.URL)
 			if err != nil {
-				return nil, err
+				return nil, withMetadata(err, metadata)
 			}
 			images = append(images, GeneratedImage{
-				Data:          data,
-				ContentType:   contentType,
-				RevisedPrompt: item.RevisedPrompt,
-				Source:        ImageSourceURL,
-				RequestID:     requestID,
+				Data:           data,
+				ContentType:    contentType,
+				RevisedPrompt:  item.RevisedPrompt,
+				Source:         ImageSourceURL,
+				RequestID:      metadata.RequestID,
+				RequestSummary: metadata,
 			})
 		default:
-			return nil, newError(ErrorInvalidResponse, operation, errors.New("provider image has no data"))
+			return nil, withMetadata(
+				newError(ErrorInvalidResponse, operation, errors.New("provider image has no data")),
+				metadata,
+			)
 		}
 	}
 	return images, nil

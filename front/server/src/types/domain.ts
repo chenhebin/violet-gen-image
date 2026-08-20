@@ -67,6 +67,8 @@ export interface DashboardMetric {
     | 'creditsGrantedToday'
     | 'failedTasks'
     | 'pendingTickets'
+    | 'overdueTickets'
+    | 'dueSoonTickets'
   label: string
   value: number
   tone: 'neutral' | 'positive' | 'warning' | 'danger'
@@ -210,6 +212,7 @@ export interface AIProvider {
     testedAt: string
     success: boolean
     message: string
+    requestSummary?: ProviderRequestSummary | null
   }
   note?: string
   createdAt: string
@@ -254,10 +257,23 @@ export interface AIModel {
     testedAt: string
     success: boolean
     message: string
+    requestSummary?: ProviderRequestSummary | null
   }
   createdAt: string
   updatedAt: string
   isPlatformModel: boolean
+}
+
+export interface ProviderRequestSummary {
+  operation: string
+  method: string
+  path: string
+  model?: string
+  parameterSummary?: Record<string, unknown>
+  status?: number
+  latencyMs: number
+  requestId?: string
+  errorKind?: string
 }
 
 export interface CreateAIModelPayload {
@@ -356,8 +372,9 @@ export interface ManagedAsset {
   size: number
   width: number
   height: number
-  previewUrl?: string
-  taskId?: string
+	previewUrl?: string
+	previewUrlExpiresAt?: string
+	taskId?: string
   ticketId?: string
   retained: boolean
   retentionExpiresAt: string | null
@@ -411,8 +428,31 @@ export interface ManagedGenerationTask extends ManagedGenerationTaskSummary {
     modelName: string
     configVersion: number
   }
+  providerAttempts?: ProviderAttempt[]
   errorMessage?: string
   retouchTicket?: ManageRetouchTicketSummary
+}
+
+export interface ProviderAttempt {
+  id: string
+  jobId: string
+  outputIndex?: number
+  attemptNo: number
+  operation: string
+  method: string
+  path: string
+  model: string
+  status: string
+  externalRequestId?: string
+  responseStatus?: number
+  latencyMs: number
+  errorCode?: string
+  errorKind?: string
+  errorSummary?: string
+  requestSummary?: Record<string, unknown>
+  responseMetadata?: Record<string, unknown>
+  startedAt: string
+  completedAt?: string
 }
 
 export interface ManagedTaskQuery extends PageQuery {
@@ -427,6 +467,7 @@ export interface ManagedTaskQuery extends PageQuery {
 export interface GenerationResult {
   id: string
   url: string
+  urlExpiresAt?: string
   width: number
   height: number
 }
@@ -445,6 +486,7 @@ export interface ManageRetouchTicketSummary {
   taskTitle: string
   status: RetouchTicketStatus
   quoteCredits?: number
+  sla: RetouchSLA
   user: Pick<ManagedUser, 'id' | 'email' | 'status'>
   createdAt: string
   updatedAt: string
@@ -458,6 +500,9 @@ export interface ManageRetouchTicket extends ManageRetouchTicketSummary {
     id: string
     credits: number
     createdAt: string
+    status: 'active' | 'accepted' | 'invalidated' | 'expired'
+    expiresAt: string
+    remainingSeconds: number
   }
   timeline: RetouchTimelineEntry[]
   reservedCredits: number
@@ -476,6 +521,14 @@ export interface ManageRetouchTicket extends ManageRetouchTicketSummary {
 
 export interface RetouchTicketQuery extends PageQuery {
   status?: RetouchTicketStatus
+  sla?: 'overdue' | 'due-soon'
+}
+
+export interface RetouchSLA {
+  stage: 'quote' | 'first-delivery' | 'revision' | 'completed'
+  dueAt: string | null
+  overdue: boolean
+  remainingSeconds: number | null
 }
 
 export interface AuditEvent {

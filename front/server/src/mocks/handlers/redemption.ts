@@ -27,6 +27,7 @@ import { createId } from '@/utils/id'
 import { paginate } from '@/utils/pagination'
 import {
   deriveRedemptionStatus,
+  formatXianyuInventoryLine,
   normalizeRedemptionCode,
 } from '@/utils/redemption'
 
@@ -374,6 +375,32 @@ export const redemptionHandlers = [
             item.batchId === batch.id &&
             deriveRedemptionStatus(item) === 'unused',
         )
+        const format = new URL(request.url).searchParams.get('format') || 'csv'
+        if (format === 'xianyu') {
+          const content = items
+            .map((item) =>
+              formatXianyuInventoryLine(REDEMPTION_CONFIG.publicWebUrl, item.fullCode),
+            )
+            .join('\n')
+          appendAudit(db, admin, {
+            action: 'redemption.batch.export',
+            resourceType: 'redemption_batch',
+            resourceId: batch.id,
+            after: { exportedCount: items.length, format },
+            result: 'success',
+            requestId: requestId(request),
+          })
+          return {
+            filename: `xianyu-inventory-${batch.id}.txt`,
+            content,
+            mediaType: 'text/plain;charset=utf-8',
+            format,
+            count: items.length,
+          }
+        }
+        if (format !== 'csv') {
+          throw new MockApiError(400, ErrorCode.InvalidPayload, '不支持的导出格式')
+        }
         const rows = [
           ['兑换码', '批次', '次数', '商品标识', '状态', '有效期'],
           ...items.map((item) => [
@@ -389,17 +416,20 @@ export const redemptionHandlers = [
           action: 'redemption.batch.export',
           resourceType: 'redemption_batch',
           resourceId: batch.id,
-          after: { exportedCount: items.length },
+          after: { exportedCount: items.length, format },
           result: 'success',
           requestId: requestId(request),
         })
+        const csv = `\uFEFF${rows
+          .map((row) => row.map((value) => `"${value.replaceAll('"', '""')}"`).join(','))
+          .join('\n')}`
         return {
           filename: `${batch.name.replaceAll(/[^\w\u4e00-\u9fa5-]/g, '_')}.csv`,
-          csv: `\uFEFF${rows
-            .map((row) =>
-              row.map((value) => `"${value.replaceAll('"', '""')}"`).join(','),
-            )
-            .join('\n')}`,
+          content: csv,
+          csv,
+          mediaType: 'text/csv;charset=utf-8',
+          format,
+          count: items.length,
         }
       })
     }),

@@ -11,13 +11,14 @@ import (
 )
 
 type Service struct {
-	db          *gorm.DB
-	credits     *credit.Service
-	redemptions *redemption.Service
-	assets      *asset.Service
-	generations *generation.Service
-	retouches   *retouch.Service
-	bcryptCost  int
+	db           *gorm.DB
+	credits      *credit.Service
+	redemptions  *redemption.Service
+	assets       *asset.Service
+	generations  *generation.Service
+	retouches    *retouch.Service
+	bcryptCost   int
+	publicWebURL string
 }
 
 func New(
@@ -28,11 +29,13 @@ func New(
 	generations *generation.Service,
 	retouches *retouch.Service,
 	bcryptCost int,
+	publicWebURL string,
 ) *Service {
 	return &Service{
 		db: db, credits: credits, redemptions: redemptions, assets: assets,
 		generations: generations, retouches: retouches,
-		bcryptCost: bcryptCost,
+		bcryptCost:   bcryptCost,
+		publicWebURL: publicWebURL,
 	}
 }
 

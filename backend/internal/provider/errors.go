@@ -27,6 +27,7 @@ type Error struct {
 	StatusCode   int
 	ProviderCode string
 	Retryable    bool
+	Metadata     CallMetadata
 	cause        error
 }
 
@@ -53,6 +54,21 @@ func newError(kind ErrorKind, operation string, cause error) *Error {
 		Operation: operation,
 		cause:     safeCause(cause),
 	}
+}
+
+func attachMetadata(err error, metadata CallMetadata) {
+	if err == nil {
+		return
+	}
+	var providerErr *Error
+	if errors.As(err, &providerErr) {
+		providerErr.Metadata = metadata
+	}
+}
+
+func withMetadata(err error, metadata CallMetadata) error {
+	attachMetadata(err, metadata)
+	return err
 }
 
 func safeCause(err error) error {

@@ -98,6 +98,15 @@ func TestGenerationModeForAssets(t *testing.T) {
 	}
 }
 
+func TestHasSourceAsset(t *testing.T) {
+	if hasSourceAsset([]model.Asset{{Kind: asset.KindReference}}) {
+		t.Fatal("reference image must not satisfy source image requirement")
+	}
+	if !hasSourceAsset([]model.Asset{{Kind: asset.KindSource}}) {
+		t.Fatal("source image should satisfy source image requirement")
+	}
+}
+
 func TestBuildDirectPromptVersionSnapshotsSourceAssetsAndReferenceRoles(t *testing.T) {
 	now := time.Date(2026, 8, 11, 8, 0, 0, 0, time.UTC)
 	version, roles, err := buildDirectPromptVersion(

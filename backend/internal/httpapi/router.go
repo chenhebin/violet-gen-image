@@ -50,6 +50,12 @@ func NewRouter(deps Dependencies) *gin.Engine {
 
 	authHandler := auth.NewHandler(deps.AuthService, deps.Config)
 	authLimiter := appmiddleware.NewRateLimiter(20, time.Minute)
+	redemptionPreviewLimiter := appmiddleware.NewRateLimiter(20, time.Minute)
+	userMutationLimiter := appmiddleware.NewRateLimiter(60, time.Minute)
+	promptLimiter := appmiddleware.NewRateLimiter(12, time.Minute)
+	generationLimiter := appmiddleware.NewRateLimiter(8, time.Minute)
+	uploadLimiter := appmiddleware.NewRateLimiter(30, time.Minute)
+	manageMutationLimiter := appmiddleware.NewRateLimiter(120, time.Minute)
 
 	api := engine.Group(deps.Config.App.APIBasePath)
 	userAuth := api.Group("/auth")
@@ -73,22 +79,39 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		auth.RequireAdminCSRF(deps.Config),
 		authHandler.LogoutAdmin,
 	)
+	api.POST(
+		"/redemptions/preview",
+		redemptionPreviewLimiter.Middleware(func(c *gin.Context) string {
+			return "redemption-preview:" + c.ClientIP()
+		}),
+		deps.UserHandler.PreviewRedemption,
+	)
 
 	userAPI := api.Group("")
 	userAPI.Use(auth.RequireUser(deps.AuthService, deps.Config))
+	userAPI.Use(userMutationLimiter.Middleware(func(c *gin.Context) string {
+		if principal, ok := auth.UserPrincipalFrom(c); ok {
+			return "user:" + principal.User.ID
+		}
+		return "user-ip:" + c.ClientIP()
+	}))
 	userAPI.GET("/me", deps.UserHandler.Me)
 	userAPI.GET("/entitlements", deps.UserHandler.Entitlement)
 	userAPI.GET("/usage/ledger", deps.UserHandler.Ledger)
+	userAPI.GET("/notices/ai-processing", deps.UserHandler.AINotice)
+	userAPI.POST("/notices/ai-processing/ack", appmiddleware.RequireIdempotencyKey(), deps.UserHandler.AckAINotice)
 	userAPI.POST("/usage/quote", deps.UserHandler.Quote)
 	userAPI.POST("/redemptions/claim", deps.UserHandler.ClaimRedemption)
-	userAPI.POST("/assets", deps.UserHandler.UploadAsset)
-	userAPI.DELETE("/assets/:assetId", deps.UserHandler.DeleteAsset)
-	userAPI.POST("/prompts/optimize", deps.UserHandler.OptimizePrompt)
-	userAPI.POST("/prompts/confirm", deps.UserHandler.ConfirmPrompt)
-	userAPI.POST("/generations", deps.UserHandler.CreateGeneration)
+	userAPI.POST("/assets", uploadLimiter.Middleware(func(c *gin.Context) string { return "upload:" + c.ClientIP() }), appmiddleware.RequireIdempotencyKey(), deps.UserHandler.UploadAsset)
+	userAPI.DELETE("/assets/:assetId", appmiddleware.RequireIdempotencyKey(), deps.UserHandler.DeleteAsset)
+	userAPI.GET("/assets/:assetId/url", deps.UserHandler.AssetURL)
+	userAPI.POST("/prompts/optimize", promptLimiter.Middleware(func(c *gin.Context) string { return "prompt:" + c.ClientIP() }), deps.UserHandler.OptimizePrompt)
+	userAPI.POST("/prompts/reference-prompt", promptLimiter.Middleware(func(c *gin.Context) string { return "prompt:" + c.ClientIP() }), deps.UserHandler.DescribeReferencePrompt)
+	userAPI.POST("/prompts/confirm", appmiddleware.RequireIdempotencyKey(), deps.UserHandler.ConfirmPrompt)
+	userAPI.POST("/generations", generationLimiter.Middleware(func(c *gin.Context) string { return "generation:" + c.ClientIP() }), deps.UserHandler.CreateGeneration)
 	userAPI.GET("/tasks", deps.UserHandler.ListTasks)
 	userAPI.GET("/tasks/:taskId", deps.UserHandler.GetTask)
-	userAPI.POST("/tasks/:taskId/cancel", deps.UserHandler.CancelTask)
+	userAPI.POST("/tasks/:taskId/cancel", appmiddleware.RequireIdempotencyKey(), deps.UserHandler.CancelTask)
 	userAPI.GET("/retouch-tickets", deps.UserHandler.ListRetouch)
 	userAPI.GET("/retouch-tickets/:ticketId", deps.UserHandler.GetRetouch)
 	userAPI.POST("/tasks/:taskId/retouch-tickets", deps.UserHandler.CreateRetouch)
@@ -102,6 +125,12 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		auth.RequireAdmin(deps.AuthService, deps.Config),
 		auth.RequireAdminCSRF(deps.Config),
 		appmiddleware.RequireIdempotencyKey(),
+		manageMutationLimiter.Middleware(func(c *gin.Context) string {
+			if principal, ok := auth.AdminPrincipalFrom(c); ok {
+				return "manage:" + principal.Admin.ID
+			}
+			return "manage-ip:" + c.ClientIP()
+		}),
 	)
 	manageAPI.GET("/dashboard", deps.AdminHandler.Dashboard)
 	manageAPI.GET(
@@ -147,6 +176,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	platform.GET("/assets", deps.AdminHandler.ListAssets)
 	platform.GET("/assets/:assetId", deps.AdminHandler.GetAsset)
 	platform.POST("/assets/:assetId/signed-url", deps.AdminHandler.SignAsset)
+	platform.GET("/assets/:assetId/url", deps.AdminHandler.SignAsset)
 	platform.POST("/assets/:assetId/retain", deps.AdminHandler.RetainAsset)
 	platform.POST("/assets/:assetId/cleanup", deps.AdminHandler.CleanupAsset)
 

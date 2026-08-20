@@ -7,6 +7,7 @@ import {
   type StageView,
 } from '@/config'
 import type { GenerationTask } from '@/types/domain'
+import { downloadAsset } from '@/utils/download'
 
 const props = defineProps<{
   task: GenerationTask
@@ -19,6 +20,15 @@ defineEmits<{ select: [index: number] }>()
 const selectedOutput = computed(
   () => props.task.results[props.selectedResult],
 )
+
+async function downloadSelected(): Promise<void> {
+  if (!selectedOutput.value) return
+  await downloadAsset({
+    assetId: selectedOutput.value.id,
+    currentUrl: selectedOutput.value.downloadUrl || selectedOutput.value.url,
+    filename: `映研-${selectedOutput.value.id}.jpg`,
+  })
+}
 </script>
 
 <template>
@@ -50,6 +60,7 @@ const selectedOutput = computed(
         :download="
           selectedOutput.downloadUrl ? undefined : `映研-${selectedOutput.id}.jpg`
         "
+        @click.prevent="downloadSelected"
       >
         <ArrowDownToLine :size="17" />
         下载当前图片

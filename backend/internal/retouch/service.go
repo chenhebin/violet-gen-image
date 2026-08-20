@@ -30,6 +30,10 @@ const (
 	StatusDelivered            = "delivered"
 	StatusRejected             = "rejected"
 	StatusCancelled            = "cancelled"
+	quoteValidity              = 48 * time.Hour
+	quoteSLA                   = 24 * time.Hour
+	firstDeliverySLA           = 48 * time.Hour
+	revisionSLA                = 24 * time.Hour
 )
 
 type Service struct {
@@ -137,6 +141,7 @@ func (s *Service) Create(
 			TaskID:       taskID,
 			Status:       StatusSubmitted,
 			Requirements: input.Requirement,
+			QuoteDueAt:   func() *time.Time { value := time.Now().UTC().Add(quoteSLA); return &value }(),
 			Version:      1,
 		}
 		if err := tx.Create(&ticket).Error; err != nil {
@@ -195,18 +200,19 @@ func (s *Service) Quote(
 					return err
 				}
 			}
+			now := time.Now().UTC()
 			var count int64
 			if err := tx.Model(&model.RetouchQuote{}).Where("ticket_id = ?", ticket.ID).Count(&count).Error; err != nil {
 				return err
 			}
+			expiresAt := now.Add(quoteValidity)
 			quote := model.RetouchQuote{
 				TicketID: ticket.ID, QuoteVersion: int(count) + 1, Credits: input.Credits,
-				Notes: input.Note, Status: "active", CreatedBy: adminID,
+				Notes: input.Note, Status: "active", CreatedBy: adminID, ExpiresAt: expiresAt,
 			}
 			if err := tx.Create(&quote).Error; err != nil {
 				return err
 			}
-			now := time.Now().UTC()
 			from := ticket.Status
 			if err := tx.Model(ticket).Updates(map[string]any{
 				"status": StatusQuotePending, "current_quote_id": quote.ID,
@@ -229,6 +235,12 @@ func (s *Service) AcceptQuote(
 	quoteID string,
 	key string,
 ) (*TicketDTO, int, error) {
+	// Expire the current quote in its own transaction before attempting the
+	// acceptance transaction. Returning a business error from the acceptance
+	// transaction would otherwise roll back the lazy-expiration update.
+	if err := s.expireQuoteIfNeeded(ctx, ticketID); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, 0, err
+	}
 	request := struct {
 		QuoteID string `json:"quoteId"`
 	}{QuoteID: quoteID}
@@ -242,6 +254,9 @@ func (s *Service) AcceptQuote(
 			if err := tx.Where("id = ? AND status = ?", quoteID, "active").First(&quote).Error; err != nil {
 				return apierror.New(http.StatusConflict, apierror.CodeRetouchQuote, "报价已失效", nil)
 			}
+			if !quote.ExpiresAt.IsZero() && !time.Now().UTC().Before(quote.ExpiresAt) {
+				return apierror.New(http.StatusConflict, apierror.CodeRetouchQuote, "报价已过期，请等待管理员重新报价", nil)
+			}
 			reservation, _, err := s.credits.ReserveTx(tx, userID, "retouch", ticket.ID, quote.Credits, "人工修图报价预占")
 			if err != nil {
 				return err
@@ -253,7 +268,8 @@ func (s *Service) AcceptQuote(
 			if err := tx.Model(ticket).Updates(map[string]any{
 				"status": StatusAccepted, "credit_reservation_id": reservation.ID,
 				"reserved_credits": quote.Credits, "accepted_at": &now,
-				"version": gorm.Expr("version + 1"),
+				"first_delivery_due_at": now.Add(firstDeliverySLA),
+				"version":               gorm.Expr("version + 1"),
 			}).Error; err != nil {
 				return err
 			}
@@ -399,7 +415,7 @@ func (s *Service) RequestRevision(ctx context.Context, userID, ticketID, message
 				return err
 			}
 			if err := tx.Model(ticket).Updates(map[string]any{
-				"status": StatusProcessing, "revision_used": true, "version": gorm.Expr("version + 1"),
+				"status": StatusProcessing, "revision_used": true, "revision_due_at": time.Now().UTC().Add(revisionSLA), "version": gorm.Expr("version + 1"),
 			}).Error; err != nil {
 				return err
 			}
@@ -534,21 +550,34 @@ func (s *Service) closeByAdmin(
 	return s.GetManage(ctx, ticketID)
 }
 
-func (s *Service) ListUser(ctx context.Context, userID string) ([]TicketDTO, error) {
+func (s *Service) ListUser(ctx context.Context, userID string, page int, pageSize int) (TicketPage, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	query := s.db.WithContext(ctx).Model(&model.RetouchTicket{}).Where("user_id = ?", userID)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return TicketPage{}, err
+	}
 	var tickets []model.RetouchTicket
-	if err := s.db.WithContext(ctx).Where("user_id = ?", userID).
-		Order("updated_at DESC").Find(&tickets).Error; err != nil {
-		return nil, err
+	if err := query.Order("updated_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&tickets).Error; err != nil {
+		return TicketPage{}, err
 	}
 	result := make([]TicketDTO, 0, len(tickets))
 	for _, ticket := range tickets {
 		value, err := s.ticketDTO(ctx, ticket)
 		if err != nil {
-			return nil, err
+			return TicketPage{}, err
 		}
 		result = append(result, *value)
 	}
-	return result, nil
+	return TicketPage{Items: result, Page: page, PageSize: pageSize, Total: total, HasMore: int64(page*pageSize) < total}, nil
 }
 
 func (s *Service) GetUser(ctx context.Context, userID, ticketID string) (*TicketDTO, error) {
@@ -597,6 +626,47 @@ func (s *Service) GetManage(ctx context.Context, ticketID string) (*ManageTicket
 	}, nil
 }
 
+func (s *Service) expireQuoteIfNeeded(ctx context.Context, ticketID string) error {
+	now := time.Now().UTC()
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var ticket model.RetouchTicket
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&ticket, "id = ?", ticketID).Error; err != nil {
+			return err
+		}
+		if ticket.Status != StatusQuotePending || ticket.CurrentQuoteID == nil {
+			return nil
+		}
+		var quote model.RetouchQuote
+		if err := tx.First(&quote, "id = ?", *ticket.CurrentQuoteID).Error; err != nil {
+			return nil
+		}
+		if quote.Status == "active" && !quote.ExpiresAt.IsZero() && !now.Before(quote.ExpiresAt) {
+			return tx.Model(&quote).Updates(map[string]any{"status": "expired", "invalidated_at": &now}).Error
+		}
+		return nil
+	})
+}
+
+// ExpireQuotes is called by the worker as a best-effort sweep. Read paths also
+// call expireQuoteIfNeeded, so correctness does not depend on the worker.
+func (s *Service) ExpireQuotes(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	var quotes []model.RetouchQuote
+	if err := s.db.WithContext(ctx).Where("status = ? AND expires_at <= ?", "active", time.Now().UTC()).Order("expires_at ASC").Limit(limit).Find(&quotes).Error; err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, quote := range quotes {
+		if err := s.expireQuoteIfNeeded(ctx, quote.TicketID); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
+}
+
 func (s *Service) mutate(
 	ctx context.Context,
 	realm, principalID, path, key string,
@@ -634,6 +704,9 @@ func (s *Service) mutate(
 }
 
 func (s *Service) ticketDTO(ctx context.Context, ticket model.RetouchTicket) (*TicketDTO, error) {
+	if err := s.expireQuoteIfNeeded(ctx, ticket.ID); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
 	var task model.GenerationTask
 	if err := s.db.WithContext(ctx).First(&task, "id = ?", ticket.TaskID).Error; err != nil {
 		return nil, err
@@ -658,7 +731,8 @@ func (s *Service) ticketDTO(ctx context.Context, ticket model.RetouchTicket) (*T
 		}
 		selectedResults = append(selectedResults, generation.ResultDTO{
 			ID: assetModel.ID, URL: dto.PreviewURL, DownloadURL: downloadURL,
-			Width: assetModel.Width, Height: assetModel.Height,
+			URLExpiresAt: dto.PreviewURLExpiresAt,
+			Width:        assetModel.Width, Height: assetModel.Height,
 		})
 	}
 	var relations []model.AssetRelation
@@ -684,7 +758,11 @@ func (s *Service) ticketDTO(ctx context.Context, ticket model.RetouchTicket) (*T
 	if ticket.CurrentQuoteID != nil {
 		var quote model.RetouchQuote
 		if s.db.WithContext(ctx).First(&quote, "id = ?", *ticket.CurrentQuoteID).Error == nil {
-			quoteDTO = &QuoteDTO{ID: quote.ID, Credits: quote.Credits, CreatedAt: quote.CreatedAt}
+			remaining := int64(time.Until(quote.ExpiresAt).Seconds())
+			if remaining < 0 {
+				remaining = 0
+			}
+			quoteDTO = &QuoteDTO{ID: quote.ID, Credits: quote.Credits, CreatedAt: quote.CreatedAt, Status: quote.Status, ExpiresAt: quote.ExpiresAt, RemainingSeconds: remaining}
 		}
 	}
 	var events []model.RetouchEvent
@@ -732,18 +810,44 @@ func (s *Service) ticketDTO(ctx context.Context, ticket model.RetouchTicket) (*T
 			}
 			deliverables = append(deliverables, generation.ResultDTO{
 				ID: assetModel.ID, URL: dto.PreviewURL, DownloadURL: downloadURL,
-				Width: assetModel.Width, Height: assetModel.Height,
+				URLExpiresAt: dto.PreviewURLExpiresAt,
+				Width:        assetModel.Width, Height: assetModel.Height,
 			})
 		}
 	}
+	sla := calculateSLA(ticket, time.Now().UTC())
 	return &TicketDTO{
 		ID: ticket.ID, TicketNo: ticket.TicketNo, TaskID: ticket.TaskID, TaskTitle: task.Title,
 		Status: ticket.Status, SelectedResults: selectedResults, Requirement: ticket.Requirements,
 		SupplementalAssets: supplemental, Quote: quoteDTO, Timeline: timeline,
 		ReservedCredits: ticket.ReservedCredits, SpentCredits: ticket.SpentCredits,
-		RefundedCredits: ticket.RefundedCredits, Revision: revisionDTO, Deliverables: deliverables,
+		RefundedCredits: ticket.RefundedCredits, Revision: revisionDTO, Deliverables: deliverables, SLA: sla,
 		CreatedAt: ticket.CreatedAt, UpdatedAt: ticket.UpdatedAt,
 	}, nil
+}
+
+func calculateSLA(ticket model.RetouchTicket, now time.Time) SLA {
+	stage := "completed"
+	var due *time.Time
+	switch ticket.Status {
+	case StatusSubmitted, StatusQuotePending:
+		stage, due = "quote", ticket.QuoteDueAt
+	case StatusAccepted, StatusProcessing, StatusAwaitingConfirmation:
+		if ticket.RevisionUsed && ticket.RevisionDueAt != nil {
+			stage, due = "revision", ticket.RevisionDueAt
+		} else {
+			stage, due = "first-delivery", ticket.FirstDeliveryDueAt
+		}
+	}
+	if due == nil {
+		return SLA{Stage: stage}
+	}
+	remaining := int64(due.Sub(now).Seconds())
+	overdue := remaining < 0
+	if remaining < 0 {
+		remaining = 0
+	}
+	return SLA{Stage: stage, DueAt: due, Overdue: overdue, RemainingSeconds: &remaining}
 }
 
 func createEvent(

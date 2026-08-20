@@ -2,6 +2,7 @@
 import {
   CalendarPlus,
   Download,
+  PackageOpen,
   Eye,
   MoreHorizontal,
   PencilLine,
@@ -25,6 +26,7 @@ const emit = defineEmits<{
   'update:page': [page: number]
   detail: [batch: RedemptionBatch]
   export: [batch: RedemptionBatch]
+  exportXianyu: [batch: RedemptionBatch]
   disable: [batch: RedemptionBatch]
   extend: [batch: RedemptionBatch]
   rename: [batch: RedemptionBatch]
@@ -162,6 +164,14 @@ const { openMenuId, menuPosition, closeMenu, toggleMenu } =
                     >
                       <Download :size="15" aria-hidden="true" />
                       导出未使用码
+                    </button>
+                    <button
+                      type="button"
+                      :disabled="props.exportingId === batch.id || batch.counts.unused === 0"
+                      @click="closeMenu(); emit('exportXianyu', batch)"
+                    >
+                      <PackageOpen :size="15" aria-hidden="true" />
+                      导出闲鱼库存
                     </button>
                     <button
                       type="button"

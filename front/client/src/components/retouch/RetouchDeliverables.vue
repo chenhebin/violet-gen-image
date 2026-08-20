@@ -1,10 +1,24 @@
 <script setup lang="ts">
-import { Download, Image as ImageIcon } from '@lucide/vue'
+import { Download, Image as ImageIcon, Maximize2 } from '@lucide/vue'
 import type { GenerationResult } from '@/types/domain'
+import { downloadAsset } from '@/utils/download'
 
 defineProps<{
   deliverables: GenerationResult[]
 }>()
+
+const emit = defineEmits<{
+  preview: [id: string]
+  imageError: [id: string]
+}>()
+
+async function downloadResult(item: GenerationResult, index: number): Promise<void> {
+  await downloadAsset({
+    assetId: item.id,
+    currentUrl: item.downloadUrl || item.url,
+    filename: `精修成片-${index + 1}.jpg`,
+  })
+}
 </script>
 
 <template>
@@ -23,9 +37,21 @@ defineProps<{
 
     <div class="delivery-grid">
       <figure v-for="(item, index) in deliverables" :key="item.id">
-        <div class="image-frame">
-          <img :src="item.url" :alt="`精修交付成片 ${index + 1}`" />
-        </div>
+        <button
+          type="button"
+          class="image-frame"
+          :aria-label="`放大查看精修交付成片 ${index + 1}`"
+          @click="emit('preview', `deliverable:${item.id}`)"
+        >
+          <img
+            :src="item.url"
+            :alt="`精修交付成片 ${index + 1}`"
+            @error="emit('imageError', `deliverable:${item.id}`)"
+          />
+          <span class="preview-indicator" aria-hidden="true">
+            <Maximize2 :size="15" />
+          </span>
+        </button>
         <figcaption>
           <span>
             <ImageIcon :size="14" />
@@ -34,6 +60,7 @@ defineProps<{
           <a
             :href="item.downloadUrl || item.url"
             :download="item.downloadUrl ? undefined : `精修成片-${index + 1}`"
+            @click.prevent="downloadResult(item, index)"
           >
             <Download :size="15" />
             下载
@@ -89,16 +116,42 @@ figure {
 }
 
 .image-frame {
+  position: relative;
+  display: block;
   overflow: hidden;
+  width: 100%;
   aspect-ratio: 4 / 3;
   background: var(--surface-soft);
+  cursor: zoom-in;
 }
 
 .image-frame img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform var(--motion-normal) var(--ease-out);
 }
+
+.image-frame:hover img { transform: scale(1.025); }
+
+.preview-indicator {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 30%);
+  border-radius: 6px;
+  background: rgb(17 24 25 / 72%);
+  color: #fff;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.image-frame:hover .preview-indicator,
+.image-frame:focus-visible .preview-indicator { opacity: 1; }
 
 figcaption {
   display: flex;
@@ -139,5 +192,12 @@ figcaption a:hover {
   .delivery-grid {
     grid-template-columns: 1fr;
   }
+
+  .preview-indicator { opacity: 0.85; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-frame img,
+  .preview-indicator { transition: none; }
 }
 </style>

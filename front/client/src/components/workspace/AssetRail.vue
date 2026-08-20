@@ -9,6 +9,7 @@ import {
 } from '@lucide/vue'
 import { ASSET_CONFIG, REFERENCE_ROLE_OPTIONS } from '@/config'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { assetApi } from '@/services/api'
 import type { Asset, AssetKind, ReferenceRole } from '@/types/domain'
 
 const workspace = useWorkspaceStore()
@@ -39,6 +40,16 @@ function previewLabel(asset: Asset): string {
     REFERENCE_ROLE_OPTIONS.find((item) => item.value === asset.role)?.label ??
     '风格'
   )
+}
+
+async function refreshPreview(asset: Asset): Promise<void> {
+  try {
+    const signed = await assetApi.getUrl(asset.id)
+    asset.previewUrl = signed.url
+    asset.previewUrlExpiresAt = signed.expiresAt
+  } catch {
+    // Keep the failed URL visible; the next hydration can retry.
+  }
 }
 </script>
 
@@ -99,7 +110,7 @@ function previewLabel(asset: Asset): string {
         >
           <div class="frame-index">{{ String(index + 1).padStart(2, '0') }}</div>
           <div class="proof-image">
-            <img v-if="asset.previewUrl" :src="asset.previewUrl" :alt="asset.name" />
+            <img v-if="asset.previewUrl" :src="asset.previewUrl" :alt="asset.name" @error="refreshPreview(asset)" />
             <FileImage v-else :size="22" />
             <span>{{ previewLabel(asset) }}</span>
           </div>
@@ -120,7 +131,7 @@ function previewLabel(asset: Asset): string {
         <div class="section-heading">
           <div>
             <h3>参考图片</h3>
-            <p>风格、构图或局部细节</p>
+            <p>用于分析风格、构图和光影，不会作为生图原图上传</p>
           </div>
           <button
             class="add-button"
@@ -162,7 +173,7 @@ function previewLabel(asset: Asset): string {
         >
           <div class="frame-index">R{{ index + 1 }}</div>
           <div class="proof-image">
-            <img v-if="asset.previewUrl" :src="asset.previewUrl" :alt="asset.name" />
+            <img v-if="asset.previewUrl" :src="asset.previewUrl" :alt="asset.name" @error="refreshPreview(asset)" />
             <FileImage v-else :size="22" />
             <span>{{ previewLabel(asset) }}</span>
           </div>

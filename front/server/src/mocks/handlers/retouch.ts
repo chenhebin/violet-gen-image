@@ -8,6 +8,7 @@ import {
 } from '@/mocks/db'
 import {
   dbAndAdmin,
+  enforceRateLimit,
   idempotentMutation,
   MockApiError,
   readJson,
@@ -73,21 +74,22 @@ export const retouchHandlers = [
       const status = url.searchParams.get('status') as
         | RetouchTicketStatus
         | null
+      const sla = url.searchParams.get('sla')
       const page = Number(url.searchParams.get('page') || 1)
       const pageSize = Number(url.searchParams.get('pageSize') || 20)
       const items = db.tickets
+        .map((item) => publicTicketSummary(item, db))
         .filter((item) => {
-          const user = db.users.find((entry) => entry.id === item.userId)
           return (
             (!status || item.status === status) &&
+            (!sla || (sla === 'overdue' ? item.sla.overdue : item.sla.remainingSeconds !== null && item.sla.remainingSeconds <= 24 * 60 * 60 && !item.sla.overdue)) &&
             (!keyword ||
               item.ticketNo.toLowerCase().includes(keyword) ||
               item.taskTitle.toLowerCase().includes(keyword) ||
-              user?.email.toLowerCase().includes(keyword))
+              item.user.email.toLowerCase().includes(keyword))
           )
         })
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-        .map((item) => publicTicketSummary(item, db))
       return paginate(items, page, pageSize)
     }),
   ),
@@ -101,6 +103,7 @@ export const retouchHandlers = [
 
   http.post('/api/manage/retouch-tickets/:ticketId/quote', ({ params, request }) =>
     respond(async () => {
+      enforceRateLimit('manage:retouch:quote', 10)
       const payload = await readJson<{
         credits: number
         note?: string
@@ -126,10 +129,14 @@ export const retouchHandlers = [
           )
         }
         const previousQuote = ticket.quote?.credits
+        const quotedAt = new Date().toISOString()
         ticket.quote = {
           id: createId('quote'),
           credits: payload.credits,
-          createdAt: new Date().toISOString(),
+          createdAt: quotedAt,
+          status: 'active',
+          expiresAt: new Date(Date.parse(quotedAt) + 48 * 60 * 60_000).toISOString(),
+          remainingSeconds: 48 * 60 * 60,
         }
         appendTimeline(
           ticket,

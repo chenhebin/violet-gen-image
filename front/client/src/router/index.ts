@@ -16,6 +16,13 @@ export const router = createRouter({
       meta: { public: true },
     },
     {
+      path: '/claim',
+      alias: '/claim/',
+      name: 'claim',
+      component: () => import('@/views/ClaimView.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/app',
       component: () => import('@/layouts/AppShell.vue'),
       children: [
@@ -62,7 +69,12 @@ onAuthenticationFailure(() => {
   const auth = useAuthStore()
   auth.invalidateSession()
   const current = router.currentRoute.value
-  if (current.name === 'auth') return
+  const browserPath = window.location.pathname.replace(/\/+$/, '')
+  if (
+    current.name === 'auth' ||
+    current.name === 'claim' ||
+    browserPath === '/claim'
+  ) return
   void router.replace({
     name: 'auth',
     query: { redirect: current.fullPath },

@@ -15,6 +15,11 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8080',
         changeOrigin: true,
+        // Keep backend Origin/CSRF checks stable when Vite is opened through a
+        // changing LAN address during local device testing.
+        headers: {
+          Origin: 'http://127.0.0.1:5174',
+        },
       },
     },
   },

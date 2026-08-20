@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -22,6 +23,31 @@ func TestRequestID(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 	if got := recorder.Header().Get("X-Request-Id"); got != "req-test-123" {
 		t.Fatalf("X-Request-Id = %q", got)
+	}
+}
+
+func TestRateLimiterSetsRetryAfterAndSkipsReads(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	limiter := NewRateLimiter(1, time.Minute)
+	router := gin.New()
+	router.Use(limiter.Middleware(func(*gin.Context) string { return "test" }))
+	router.GET("/read", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	router.POST("/write", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/write", nil))
+	if first.Code != http.StatusNoContent {
+		t.Fatalf("first write status = %d", first.Code)
+	}
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/write", nil))
+	if second.Code != http.StatusTooManyRequests || second.Header().Get("Retry-After") != "60" {
+		t.Fatalf("limited response = %d, retry-after=%q", second.Code, second.Header().Get("Retry-After"))
+	}
+	read := httptest.NewRecorder()
+	router.ServeHTTP(read, httptest.NewRequest(http.MethodGet, "/read", nil))
+	if read.Code != http.StatusNoContent {
+		t.Fatalf("read status = %d", read.Code)
 	}
 }
 

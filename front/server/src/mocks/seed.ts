@@ -186,9 +186,34 @@ function ticket(
     spentCredits: 0,
     refundedCredits: 0,
     deliverables: [],
+    sla: {
+      stage: 'quote',
+      dueAt: iso(22 * 60 * 60_000),
+      overdue: false,
+      remainingSeconds: 22 * 60 * 60,
+    },
     createdAt: iso(-2 * DAY),
     updatedAt: iso(-2 * DAY),
     ...extra,
+  }
+}
+
+function quote(
+  id: string,
+  credits: number,
+  createdAt: string,
+  status: 'active' | 'accepted' | 'invalidated' | 'expired' = 'active',
+): NonNullable<MockTicket['quote']> {
+  const expiresAt = new Date(Date.parse(createdAt) + 48 * 60 * 60_000).toISOString()
+  return {
+    id,
+    credits,
+    createdAt,
+    status,
+    expiresAt,
+    remainingSeconds: status === 'active'
+      ? Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000))
+      : 0,
   }
 }
 
@@ -356,7 +381,7 @@ export function createSeedDb(): MockDb {
       'task_mia_partial',
       'quote_pending',
       {
-        quote: { id: 'quote_seed', credits: 4, createdAt: iso(-DAY) },
+        quote: quote('quote_seed', 4, iso(-DAY)),
         timeline: [
           {
             status: 'submitted',
@@ -379,7 +404,7 @@ export function createSeedDb(): MockDb {
       'task_anna_completed',
       'accepted',
       {
-        quote: { id: 'quote_accepted', credits: 3, createdAt: iso(-3 * DAY) },
+        quote: quote('quote_accepted', 3, iso(-3 * DAY), 'accepted'),
         reservedCredits: 3,
       },
     ),
@@ -390,7 +415,7 @@ export function createSeedDb(): MockDb {
       'task_mia_partial',
       'processing',
       {
-        quote: { id: 'quote_processing', credits: 5, createdAt: iso(-4 * DAY) },
+        quote: quote('quote_processing', 5, iso(-4 * DAY), 'accepted'),
         reservedCredits: 5,
         spentCredits: 5,
       },
@@ -402,7 +427,7 @@ export function createSeedDb(): MockDb {
       'task_anna_completed',
       'awaiting_confirmation',
       {
-        quote: { id: 'quote_confirmation', credits: 3, createdAt: iso(-5 * DAY) },
+        quote: quote('quote_confirmation', 3, iso(-5 * DAY), 'accepted'),
         reservedCredits: 3,
         spentCredits: 3,
         deliverables: [
@@ -422,7 +447,7 @@ export function createSeedDb(): MockDb {
       'task_anna_completed',
       'delivered',
       {
-        quote: { id: 'quote_delivered', credits: 3, createdAt: iso(-10 * DAY) },
+        quote: quote('quote_delivered', 3, iso(-10 * DAY), 'accepted'),
         reservedCredits: 3,
         spentCredits: 3,
         deliverables: [

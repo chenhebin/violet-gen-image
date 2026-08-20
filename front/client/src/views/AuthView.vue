@@ -1,80 +1,19 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import {
-  ArrowRight,
-  Eye,
-  EyeOff,
-  LockKeyhole,
-  Mail,
-} from '@lucide/vue'
-import BaseButton from '@/components/base/BaseButton.vue'
-import SegmentedControl from '@/components/base/SegmentedControl.vue'
+import AuthForm, { type AuthMode } from '@/components/auth/AuthForm.vue'
 import { useToast } from '@/composables/useToast'
-import { AUTH_CONFIG } from '@/config'
-import { useAuthStore } from '@/stores/auth'
 
-type AuthMode = 'login' | 'register'
-
-const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const mode = ref<AuthMode>('login')
-const showPassword = ref(false)
-const touchedEmail = ref(false)
-const form = reactive({
-  email: '',
-  password: '',
-  confirmPassword: '',
-  remember: true,
-  acceptedTerms: false,
-})
 
-const emailValid = computed(() => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
-const passwordValid = computed(
-  () => form.password.length >= AUTH_CONFIG.minimumPasswordLength,
-)
-const registerValid = computed(
-  () =>
-    emailValid.value &&
-    passwordValid.value &&
-    form.password === form.confirmPassword &&
-    form.acceptedTerms,
-)
-const canSubmit = computed(() =>
-  mode.value === 'login'
-    ? emailValid.value && passwordValid.value
-    : registerValid.value,
-)
-
-async function submit(): Promise<void> {
-  if (!canSubmit.value) return
-  try {
-    if (mode.value === 'login') {
-      await auth.login({
-        email: form.email,
-        password: form.password,
-        remember: form.remember,
-      })
-      toast.success('登录成功', '工作台已恢复')
-    } else {
-      await auth.register({
-        email: form.email,
-        password: form.password,
-        remember: form.remember,
-        acceptedTerms: form.acceptedTerms,
-      })
-      toast.success('账号已创建', '使用兑换码即可开始创作')
-    }
-    const redirect =
-      typeof route.query.redirect === 'string'
-        ? route.query.redirect
-        : '/app/create'
-    await router.replace(redirect)
-  } catch {
-    // Store exposes the normalized API message beside the form.
-  }
+async function authenticated(mode: AuthMode): Promise<void> {
+  if (mode === 'login') toast.success('登录成功', '工作台已恢复')
+  else toast.success('账号已创建', '使用兑换码即可开始创作')
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/app/create'
+  await router.replace(redirect)
 }
 </script>
 
@@ -88,123 +27,17 @@ async function submit(): Promise<void> {
       </div>
     </div>
 
-    <section class="auth-panel" aria-labelledby="auth-title">
-      <div class="brand">
-        <span>映</span>
-        <strong>映研</strong>
-      </div>
-
+    <section
+      class="auth-panel"
+      :class="{ 'is-register': mode === 'register' }"
+      aria-labelledby="auth-title"
+    >
+      <div class="brand"><span>映</span><strong>映研</strong></div>
       <div class="auth-copy">
         <p>私人影像工作室</p>
-        <h1 id="auth-title">
-          {{ mode === 'login' ? '继续你的创作' : '创建一个工作账号' }}
-        </h1>
+        <h1 id="auth-title">{{ mode === 'login' ? '继续你的创作' : '创建一个工作账号' }}</h1>
       </div>
-
-      <SegmentedControl
-        v-model="mode"
-        label="登录或注册"
-        :options="[
-          { value: 'login', label: '登录' },
-          { value: 'register', label: '注册' },
-        ]"
-      />
-
-      <form novalidate @submit.prevent="submit">
-        <div class="field">
-          <label for="email">邮箱</label>
-          <div class="input-wrap">
-            <Mail :size="18" aria-hidden="true" />
-            <input
-              id="email"
-              v-model.trim="form.email"
-              type="email"
-              autocomplete="email"
-              placeholder="name@example.com"
-              @blur="touchedEmail = true"
-            />
-          </div>
-          <p v-if="touchedEmail && !emailValid" class="field-error">
-            请输入有效的邮箱地址
-          </p>
-        </div>
-
-        <div class="field">
-          <label for="password">密码</label>
-          <div class="input-wrap">
-            <LockKeyhole :size="18" aria-hidden="true" />
-            <input
-              id="password"
-              v-model="form.password"
-              :type="showPassword ? 'text' : 'password'"
-              :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
-              placeholder="至少 8 位"
-            />
-            <button
-              type="button"
-              class="password-toggle"
-              :aria-label="showPassword ? '隐藏密码' : '显示密码'"
-              @click="showPassword = !showPassword"
-            >
-              <EyeOff v-if="showPassword" :size="18" />
-              <Eye v-else :size="18" />
-            </button>
-          </div>
-          <p v-if="form.password && !passwordValid" class="field-error">
-            密码至少需要 8 位
-          </p>
-        </div>
-
-        <div v-if="mode === 'register'" class="field">
-          <label for="confirm-password">确认密码</label>
-          <div class="input-wrap">
-            <LockKeyhole :size="18" aria-hidden="true" />
-            <input
-              id="confirm-password"
-              v-model="form.confirmPassword"
-              :type="showPassword ? 'text' : 'password'"
-              autocomplete="new-password"
-              placeholder="再次输入密码"
-            />
-          </div>
-          <p
-            v-if="form.confirmPassword && form.password !== form.confirmPassword"
-            class="field-error"
-          >
-            两次输入的密码不一致
-          </p>
-        </div>
-
-        <label v-if="mode === 'register'" class="check-row">
-          <input v-model="form.acceptedTerms" type="checkbox" />
-          <span>我已阅读并同意服务协议与隐私说明</span>
-        </label>
-        <label v-else class="check-row">
-          <input v-model="form.remember" type="checkbox" />
-          <span>在此设备保持登录</span>
-        </label>
-
-        <p v-if="auth.error" class="form-error" role="alert">{{ auth.error }}</p>
-
-        <BaseButton
-          class="submit-button"
-          type="submit"
-          :loading="auth.loading"
-          :disabled="!canSubmit"
-        >
-          {{ mode === 'login' ? '进入工作台' : '创建账号' }}
-          <template #icon><ArrowRight :size="18" /></template>
-        </BaseButton>
-      </form>
-
-      <button
-        v-if="mode === 'login'"
-        class="forgot"
-        type="button"
-        @click="toast.info('找回密码', '当前版本请联系卖家处理')"
-      >
-        忘记密码？
-      </button>
+      <AuthForm @mode-changed="mode = $event" @authenticated="authenticated" />
     </section>
   </main>
 </template>
@@ -216,7 +49,6 @@ async function submit(): Promise<void> {
   height: 100dvh;
   min-height: 0;
   grid-template-columns: minmax(0, 1.2fr) minmax(420px, 0.8fr);
-  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   background: var(--surface);
 }
@@ -224,7 +56,6 @@ async function submit(): Promise<void> {
 .studio-image {
   position: relative;
   height: 100%;
-  min-height: 0;
   overflow: hidden;
   background: var(--ink);
 }
@@ -301,20 +132,10 @@ async function submit(): Promise<void> {
   font-family: 'Songti SC', serif;
 }
 
-.brand strong {
-  font-size: 18px;
-}
+.brand strong { font-size: 18px; }
 
-.auth-copy {
-  margin: 46px 0 24px;
-}
-
-.auth-copy p {
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 720;
-}
-
+.auth-copy { margin: 46px 0 24px; }
+.auth-copy p { color: var(--primary); font-size: 12px; font-weight: 720; }
 .auth-copy h1 {
   margin-top: 7px;
   font-family: 'Songti SC', 'STSong', serif;
@@ -323,131 +144,198 @@ async function submit(): Promise<void> {
   line-height: 1.2;
 }
 
-.auth-panel > .segmented {
-  width: 100%;
-}
-
-form {
-  display: grid;
-  gap: 18px;
-  margin-top: 24px;
-}
-
-.field {
-  display: grid;
-  gap: 7px;
-}
-
-.field label {
-  font-size: 13px;
-  font-weight: 680;
-}
-
-.input-wrap {
-  display: grid;
-  min-height: 50px;
-  grid-template-columns: 22px 1fr auto;
-  align-items: center;
-  gap: 8px;
-  padding: 0 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  color: var(--ink-faint);
-}
-
-.input-wrap:focus-within {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgb(20 108 99 / 10%);
-}
-
-.input-wrap input {
-  min-width: 0;
-  height: 48px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-}
-
-.password-toggle {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--ink-muted);
-}
-
-.field-error,
-.form-error {
-  color: var(--danger);
-  font-size: 12px;
-}
-
-.form-error {
-  padding: 10px 12px;
-  border-left: 3px solid var(--danger);
-  background: var(--coral-soft);
-}
-
-.check-row {
-  display: flex;
-  min-height: 32px;
-  align-items: center;
-  gap: 9px;
-  color: var(--ink-muted);
-  font-size: 12px;
-}
-
-.check-row input {
-  width: 17px;
-  height: 17px;
-  accent-color: var(--primary);
-}
-
-.submit-button {
-  width: 100%;
-}
-
-.forgot {
-  min-height: 36px;
-  background: transparent;
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 680;
-}
-
-.forgot {
-  align-self: center;
-  margin-top: 16px;
+@media (max-height: 760px) and (min-width: 841px) {
+  .auth-panel { justify-content: flex-start; padding-block: 22px; }
+  .auth-copy { margin: 24px 0 16px; }
 }
 
 @media (max-width: 840px) {
   .auth-page {
-    grid-template-columns: 1fr;
-    place-items: center;
-    background:
-      linear-gradient(rgb(18 22 24 / 64%), rgb(18 22 24 / 64%)),
-      url('/demo/auth-studio.jpg') center / cover;
+    position: relative;
+    isolation: isolate;
+    display: block;
+    background: #161a1c;
   }
 
   .studio-image {
-    display: none;
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    display: block;
+    height: 100%;
   }
 
+  .studio-image img {
+    object-position: center 34%;
+    animation: auth-image-settle 900ms var(--ease-out) both;
+  }
+
+  .studio-image::after {
+    background:
+      linear-gradient(180deg, rgb(10 13 15 / 68%) 0%, rgb(10 13 15 / 16%) 34%, rgb(10 13 15 / 28%) 52%, rgb(10 13 15 / 88%) 100%);
+  }
+
+  .image-caption { display: none; }
+
   .auth-panel {
-    width: min(calc(100% - 28px), 500px);
-    height: auto;
-    max-height: calc(100dvh - 48px);
-    padding: 28px;
-    border: 1px solid rgb(255 255 255 / 38%);
+    position: relative;
+    z-index: 1;
+    width: min(100%, 520px);
+    height: 100dvh;
+    max-height: none;
+    justify-content: flex-start;
+    padding: calc(20px + env(safe-area-inset-top)) 16px calc(14px + env(safe-area-inset-bottom));
+    margin: 0 auto;
+    overflow-y: auto;
+    color: #fff;
+    animation: auth-content-in 620ms var(--ease-out) both;
+  }
+
+  .brand > span {
+    background: rgb(255 255 255 / 94%);
+    color: #171b1d;
+    box-shadow: 0 10px 28px rgb(4 7 8 / 18%);
+  }
+
+  .brand strong {
+    color: #fff;
+    text-shadow: 0 1px 16px rgb(0 0 0 / 24%);
+  }
+
+  .auth-copy {
+    margin: 24px 2px 18px;
+    text-shadow: 0 2px 18px rgb(0 0 0 / 30%);
+  }
+
+  .auth-copy p { color: rgb(222 241 237 / 88%); }
+
+  .auth-copy h1 {
+    max-width: 340px;
+    color: #fff;
+    font-size: 34px;
+    line-height: 1.12;
+    text-wrap: balance;
+  }
+
+  .auth-panel.is-register .auth-copy {
+    margin-block: 18px 14px;
+  }
+
+  .auth-panel :deep(.auth-form) {
+    width: 100%;
+    flex: 0 0 auto;
+    padding: 18px;
+    margin-top: auto;
+    border: 1px solid rgb(255 255 255 / 46%);
     border-radius: var(--radius-md);
-    margin-block: 24px;
-    background: rgb(255 255 255 / 96%);
-    box-shadow: var(--shadow-md);
+    background: rgb(247 249 248 / 91%);
+    box-shadow:
+      0 24px 64px rgb(5 10 11 / 30%),
+      inset 0 1px 0 rgb(255 255 255 / 70%);
+    color: var(--ink);
+    backdrop-filter: blur(20px) saturate(116%);
+    animation: auth-sheet-in 720ms 80ms var(--ease-out) both;
+  }
+
+  .auth-panel :deep(.auth-form .segmented) {
+    width: 100%;
+    border-color: rgb(39 53 54 / 12%);
+    background: rgb(25 40 41 / 7%);
+  }
+
+  .auth-panel :deep(.auth-form .segmented button.active) {
+    background: rgb(255 255 255 / 88%);
+    box-shadow: 0 1px 8px rgb(21 31 32 / 9%);
+  }
+
+  .auth-panel :deep(.auth-form form) {
+    gap: 14px;
+    margin-top: 16px;
+  }
+
+  .auth-panel :deep(.auth-form .input-wrap) {
+    min-height: 48px;
+    border-color: rgb(43 61 62 / 18%);
+    background: rgb(255 255 255 / 58%);
+  }
+
+  .auth-panel :deep(.auth-form .input-wrap:focus-within) {
+    border-color: var(--primary);
+    background: rgb(255 255 255 / 80%);
+    box-shadow: 0 0 0 3px rgb(20 108 99 / 12%);
+  }
+
+  .auth-panel :deep(.auth-form .input-wrap input) { height: 46px; }
+
+  .auth-panel :deep(.auth-form .submit-button) {
+    min-height: 48px;
+    background: #185f57;
+    box-shadow: 0 10px 24px rgb(13 82 75 / 18%);
+  }
+
+  .auth-panel :deep(.auth-form .forgot) {
+    margin-top: 10px;
+    color: #145f58;
   }
 }
 
-</style>
+@media (max-width: 480px) {
+  .auth-panel {
+    width: 100%;
+    padding-inline: 14px;
+    border: 0;
+    border-radius: 0;
+  }
 
-<style scoped src="../styles/auth-responsive.css"></style>
+  .auth-copy { margin-inline: 2px; }
+
+  .auth-panel :deep(.auth-form) { padding: 17px; }
+}
+
+@media (max-width: 480px) and (max-height: 660px) {
+  .auth-panel {
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .brand > span {
+    width: 30px;
+    height: 32px;
+  }
+
+  .auth-copy,
+  .auth-panel.is-register .auth-copy {
+    margin-block: 12px 10px;
+  }
+
+  .auth-copy h1 { font-size: 28px; }
+
+  .auth-panel :deep(.auth-form) { padding: 13px 15px; }
+
+  .auth-panel :deep(.auth-form form) {
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .auth-panel :deep(.auth-form .input-wrap) { min-height: 44px; }
+  .auth-panel :deep(.auth-form .input-wrap input) { height: 42px; }
+  .auth-panel :deep(.auth-form .check-row) { min-height: 28px; }
+  .auth-panel :deep(.auth-form .submit-button) { min-height: 44px; }
+  .auth-panel :deep(.auth-form .forgot) { min-height: 30px; margin-top: 6px; }
+}
+
+@keyframes auth-content-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes auth-image-settle {
+  from { transform: scale(1.035); }
+  to { transform: scale(1); }
+}
+
+@keyframes auth-sheet-in {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+</style>

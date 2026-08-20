@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CheckCircle2, Copy, Download, TicketCheck } from '@lucide/vue'
+import { CheckCircle2, Copy, Download, PackageOpen, TicketCheck } from '@lucide/vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import type { CreateRedemptionBatchResult } from '@/types'
 import { formatDate } from './formatters'
@@ -12,6 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   copy: [value: string, label: string]
   export: [batchId: string]
+  exportXianyu: [batchId: string]
   done: []
 }>()
 
@@ -85,6 +86,14 @@ function copyAll() {
     >
       <Download :size="16" aria-hidden="true" />
       导出 CSV
+    </BaseButton>
+    <BaseButton
+      variant="secondary"
+      :loading="props.exporting"
+      @click="emit('exportXianyu', props.result.batch.id)"
+    >
+      <PackageOpen :size="16" aria-hidden="true" />
+      导出闲鱼库存
     </BaseButton>
     <BaseButton @click="emit('done')">完成</BaseButton>
   </div>

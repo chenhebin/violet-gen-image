@@ -121,6 +121,22 @@ export const contentHandlers = [
     }),
   ),
 
+  http.get('/api/manage/assets/:assetId/url', ({ params, request }) =>
+    respond(() => {
+      const { db } = dbAndAdmin('platform:manage')
+      const asset = db.assets.find((item) => item.id === params.assetId)
+      if (!asset || asset.deletedAt || !asset.previewUrl) {
+        throw new MockApiError(404, ErrorCode.NotFound, '图片资产不存在')
+      }
+      const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString()
+      return {
+        url: asset.previewUrl,
+        expiresAt,
+        purpose: new URL(request.url).searchParams.get('purpose') ?? 'preview',
+      }
+    }),
+  ),
+
   http.post('/api/manage/assets/:assetId/signed-url', ({ params, request }) =>
     respond(() => {
       const { db, admin } = dbAndAdmin('platform:manage')

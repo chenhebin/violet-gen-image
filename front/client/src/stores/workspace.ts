@@ -12,6 +12,7 @@ import { AppError, ErrorCode } from '@/types/api'
 import type {
   Asset,
   AssetKind,
+  GenerationCreateResult,
   GenerationSettings,
   GenerationTask,
   PromptSectionBackups,
@@ -36,6 +37,7 @@ function defaultDraft(mode: WorkspaceMode): WorkspaceDraft {
     mode,
     sourcePrompt: '',
     assets: [],
+    referencePrompt: '',
     promptVersion: null,
     promptSectionBackups: {},
     settings: defaultSettings(),
@@ -71,6 +73,7 @@ function loadDrafts(): Record<WorkspaceMode, WorkspaceDraft> {
       'text-to-image': {
         ...defaults['text-to-image'],
         ...saved['text-to-image'],
+        referencePrompt: saved['text-to-image']?.referencePrompt ?? '',
         settings: {
           ...defaults['text-to-image'].settings,
           ...saved['text-to-image']?.settings,
@@ -82,6 +85,7 @@ function loadDrafts(): Record<WorkspaceMode, WorkspaceDraft> {
       'image-to-image': {
         ...defaults['image-to-image'],
         ...saved['image-to-image'],
+        referencePrompt: saved['image-to-image']?.referencePrompt ?? '',
         settings: {
           ...defaults['image-to-image'].settings,
           ...saved['image-to-image']?.settings,
@@ -134,6 +138,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const isConfirmed = computed(() =>
     Boolean(draft.value.promptVersion?.confirmedAt),
   )
+  const hasReferenceAssets = computed(() => referenceAssets.value.length > 0)
+  const referenceOptimizationRequired = computed(
+    () =>
+      hasReferenceAssets.value &&
+      (sourceAssets.value.length === 0 ||
+        !draft.value.referencePrompt ||
+        !draft.value.promptVersion),
+  )
   const isUploading = computed(() => uploadCount.value > 0)
   const canOptimize = computed(
     () =>
@@ -148,6 +160,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       length <= PROMPT_CONFIG.maxLength
     )
   })
+  const canGenerate = computed(
+    () =>
+      canSubmit.value &&
+      !referenceOptimizationRequired.value &&
+      (!hasReferenceAssets.value || isConfirmed.value),
+  )
+  const promptNeedsConfirmation = computed(
+    () => hasReferenceAssets.value && Boolean(draft.value.promptVersion) && !isConfirmed.value,
+  )
 
   watch(
     drafts,
@@ -197,6 +218,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function invalidateAssetSnapshot(): void {
     cancelStaleOptimization()
     generationIdempotencyKey = null
+    draft.value.referencePrompt = ''
     draft.value.promptVersion = null
     draft.value.promptSectionBackups = {}
   }
@@ -227,6 +249,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!draft.value.promptVersion) return
     if (isPromptSectionUnchanged(key)) return
     draft.value.promptVersion.sections[key] = value
+    invalidateConfirmation()
+  }
+
+  function updateReferencePrompt(value: string): void {
+    if (!draft.value.promptVersion) return
+    draft.value.referencePrompt = value
+    draft.value.promptVersion.sections.referencePrompt = value
     invalidateConfirmation()
   }
 
@@ -356,12 +385,32 @@ export const useWorkspaceStore = defineStore('workspace', () => {
             assetId: asset.id,
             role: asset.role ?? 'style',
           })),
+          referencePrompt: targetDraft.referencePrompt || undefined,
         },
         controller.signal,
       )
       if (revision !== draftRevision || draft.value !== targetDraft) return
-      targetDraft.promptVersion = optimized
-      applyDefaultPromptProtection(targetDraft)
+      targetDraft.promptVersion = {
+        ...optimized,
+        sections: {
+          ...optimized.sections,
+          referencePrompt:
+            targetDraft.referencePrompt || optimized.sections.referencePrompt,
+        },
+      }
+
+      // Reference-guided optimization needs an explicit review of every
+      // generated section. The source image is the identity anchor, while
+      // the reference image only contributes style and atmosphere.
+      const requiresReferenceReview =
+        sourceAssets.value.length > 0 &&
+        referenceAssets.value.length > 0 &&
+        Boolean(targetDraft.referencePrompt?.trim())
+      if (requiresReferenceReview) {
+        targetDraft.promptSectionBackups = {}
+      } else {
+        applyDefaultPromptProtection(targetDraft)
+      }
     } catch (caught) {
       if (
         typeof caught === 'object' &&
@@ -379,6 +428,59 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         optimizing.value = false
       }
     }
+  }
+
+  async function describeReferencePrompt(): Promise<void> {
+    if (!referenceAssets.value.length) return
+    if (!sourceAssets.value.length) {
+      throw new Error('请先上传待修改原图，再分析参考图')
+    }
+    optimizeController?.abort()
+    const controller = new AbortController()
+    optimizeController = controller
+    const revision = draftRevision
+    const targetDraft = draft.value
+    optimizing.value = true
+    error.value = ''
+    try {
+      const result = await promptApi.describeReferences(
+        referenceAssets.value.map((asset) => ({
+          assetId: asset.id,
+          role: asset.role ?? 'style',
+        })),
+        controller.signal,
+      )
+      if (revision !== draftRevision || draft.value !== targetDraft) return
+      targetDraft.referencePrompt = result.prompt
+    } catch (caught) {
+      if (
+        typeof caught === 'object' &&
+        caught !== null &&
+        'code' in caught &&
+        caught.code === 'ERR_CANCELED'
+      ) {
+        return
+      }
+      error.value = caught instanceof Error ? caught.message : '参考图分析失败'
+      throw caught
+    } finally {
+      if (optimizeController === controller) {
+        optimizeController = null
+        optimizing.value = false
+      }
+    }
+  }
+
+  async function preparePrompt(): Promise<void> {
+    if (referenceAssets.value.length > 0) {
+      if (!sourceAssets.value.length) {
+        throw new Error('请先上传待修改原图')
+      }
+      if (!draft.value.referencePrompt) {
+        await describeReferencePrompt()
+      }
+    }
+    await optimizePrompt()
   }
 
   async function confirmPrompt(): Promise<void> {
@@ -400,10 +502,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
-  async function submit(): Promise<GenerationTask> {
+  async function submit(): Promise<GenerationCreateResult | null> {
     const prompt = draft.value.promptVersion
     const source = draft.value.sourcePrompt.trim()
     if (!canSubmit.value) throw new Error('请先填写完整的画面需求')
+    if (referenceOptimizationRequired.value) {
+      await preparePrompt()
+      return null
+    }
+    if (hasReferenceAssets.value && !prompt?.confirmedAt) {
+      throw new Error('请先确认参考图优化后的提示词')
+    }
     cancelStaleOptimization()
 
     submitting.value = true
@@ -452,6 +561,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       mode: task.mode,
       sourcePrompt: task.prompt.source,
       assets: task.assets,
+      referencePrompt: task.prompt.sections.referencePrompt ?? '',
       promptVersion: {
         ...task.prompt,
         confirmedAt: undefined,
@@ -475,6 +585,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     draft,
     sourceAssets,
     referenceAssets,
+    hasReferenceAssets,
+    referenceOptimizationRequired,
     optimizing,
     confirming,
     submitting,
@@ -482,11 +594,14 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     isConfirmed,
     canOptimize,
     canSubmit,
+    canGenerate,
+    promptNeedsConfirmation,
     error,
     currentTask,
     setMode,
     setSourcePrompt,
     updatePromptSection,
+    updateReferencePrompt,
     isPromptSectionUnchanged,
     setPromptSectionUnchanged,
     updateSettings,
@@ -495,6 +610,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     removeAsset,
     setReferenceRole,
     optimizePrompt,
+    describeReferencePrompt,
+    preparePrompt,
     confirmPrompt,
     submit,
     reuseTask,

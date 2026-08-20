@@ -130,8 +130,8 @@ export const useRedemptionStore = defineStore('redemption', () => {
     return result
   }
 
-  async function exportBatch(batchId: string) {
-    return runMutation(() => redemptionApi.exportBatch(batchId))
+  async function exportBatch(batchId: string, format: 'csv' | 'xianyu' = 'csv') {
+    return runMutation(() => redemptionApi.exportBatch(batchId, format))
   }
 
   async function disableCodes(

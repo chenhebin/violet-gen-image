@@ -25,6 +25,7 @@ import type {
   RedemptionBatch,
   RedemptionCode,
   RedemptionCodeDetail,
+  RetouchSLA,
 } from '@/types/domain'
 import { createId } from '@/utils/id'
 import {
@@ -248,6 +249,7 @@ export function publicTask(task: MockTask, db: MockDb): ManagedGenerationTask {
       .map((id) => db.assets.find((item) => item.id === id))
       .filter((item) => item !== undefined),
     executionSnapshot: task.executionSnapshot,
+    providerAttempts: task.providerAttempts ?? [],
     errorMessage: task.errorMessage,
     retouchTicket: ticket ? publicTicketSummary(ticket, db) : undefined,
   }
@@ -257,6 +259,7 @@ export function publicTicketSummary(
   ticket: MockTicket,
   db: MockDb,
 ): ManageRetouchTicketSummary {
+  materializeRetouchTiming(ticket)
   const user = db.users.find((item) => item.id === ticket.userId)
   return {
     id: ticket.id,
@@ -265,6 +268,7 @@ export function publicTicketSummary(
     taskTitle: ticket.taskTitle,
     status: ticket.status,
     quoteCredits: ticket.quote?.credits,
+    sla: ticket.sla,
     user: {
       id: ticket.userId,
       email: user?.email ?? '未知用户',
@@ -279,6 +283,7 @@ export function publicTicket(
   ticket: MockTicket,
   db: MockDb,
 ): ManageRetouchTicket {
+  materializeRetouchTiming(ticket)
   const task = db.tasks.find((item) => item.id === ticket.taskId)
   if (!task) throw new Error('来源任务不存在')
   return {
@@ -296,6 +301,42 @@ export function publicTicket(
     revision: ticket.revision,
     deliverables: ticket.deliverables,
     sourceTaskDetail: publicTask(task, db),
+  }
+}
+
+function materializeRetouchTiming(ticket: MockTicket): void {
+  const now = Date.now()
+  if (ticket.quote?.status === 'active' && Date.parse(ticket.quote.expiresAt) <= now) {
+    ticket.quote.status = 'expired'
+    ticket.quote.remainingSeconds = 0
+  }
+  if (ticket.quote) {
+    ticket.quote.remainingSeconds = ticket.quote.status === 'active'
+      ? Math.max(0, Math.floor((Date.parse(ticket.quote.expiresAt) - now) / 1000))
+      : 0
+  }
+
+  let stage: RetouchSLA['stage'] = 'completed'
+  let dueAt: string | null = null
+  if (ticket.status === 'submitted' || ticket.status === 'quote_pending') {
+    stage = 'quote'
+    dueAt = new Date(Date.parse(ticket.createdAt) + 24 * 60 * 60_000).toISOString()
+  } else if (ticket.status === 'accepted' || ticket.status === 'processing' || ticket.status === 'awaiting_confirmation') {
+    if (ticket.revision) {
+      stage = 'revision'
+      dueAt = new Date(Date.parse(ticket.revision.requestedAt) + 24 * 60 * 60_000).toISOString()
+    } else {
+      stage = 'first-delivery'
+      dueAt = new Date(Date.parse(ticket.acceptedAt ?? ticket.updatedAt) + 48 * 60 * 60_000).toISOString()
+    }
+  }
+  const dueMs = dueAt ? Date.parse(dueAt) : 0
+  const remaining = dueMs ? Math.max(0, Math.floor((dueMs - now) / 1000)) : null
+  ticket.sla = {
+    stage,
+    dueAt,
+    overdue: Boolean(dueMs && dueMs <= now),
+    remainingSeconds: remaining,
   }
 }
 

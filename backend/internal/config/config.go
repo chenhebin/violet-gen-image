@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -22,10 +23,13 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Env            string
-	HTTPAddr       string
-	AllowedOrigins []string
-	APIBasePath    string
+	Env               string
+	HTTPAddr          string
+	AllowedOrigins    []string
+	APIBasePath       string
+	PublicWebURL      string
+	ClientProductCode string
+	ClientProductName string
 }
 
 type DatabaseConfig struct {
@@ -75,10 +79,12 @@ type SeedAccountsConfig struct {
 }
 
 type WorkerConfig struct {
-	HealthAddr   string
-	PollInterval time.Duration
-	StaleAfter   time.Duration
-	WorkerID     string
+	HealthAddr    string
+	PollInterval  time.Duration
+	StaleAfter    time.Duration
+	QueueTimeout  time.Duration
+	OutputTimeout time.Duration
+	WorkerID      string
 }
 
 type ProviderConfig struct {
@@ -92,10 +98,13 @@ type ProviderConfig struct {
 func Load() (Config, error) {
 	cfg := Config{
 		App: AppConfig{
-			Env:            env("APP_ENV", "development"),
-			HTTPAddr:       env("HTTP_ADDR", ":8080"),
-			AllowedOrigins: csvEnv("ALLOWED_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174"),
-			APIBasePath:    "/api",
+			Env:               env("APP_ENV", "development"),
+			HTTPAddr:          env("HTTP_ADDR", ":8080"),
+			AllowedOrigins:    csvEnv("ALLOWED_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174"),
+			APIBasePath:       "/api",
+			PublicWebURL:      strings.TrimRight(env("PUBLIC_WEB_URL", "https://img.daidaiweb.cn"), "/"),
+			ClientProductCode: env("CLIENT_PRODUCT_CODE", "yingyan-client"),
+			ClientProductName: env("CLIENT_PRODUCT_NAME", "AI 生图服务"),
 		},
 		Database: DatabaseConfig{
 			URL:             env("DATABASE_URL", "postgres://yingyan:yingyan_dev@127.0.0.1:5432/yingyan?sslmode=disable"),
@@ -139,10 +148,12 @@ func Load() (Config, error) {
 			RetouchAdminPassword: os.Getenv("RETOUCH_ADMIN_PASSWORD"),
 		},
 		Worker: WorkerConfig{
-			HealthAddr:   env("WORKER_HEALTH_ADDR", ":8081"),
-			PollInterval: durationEnv("WORKER_POLL_INTERVAL", time.Second),
-			StaleAfter:   durationEnv("WORKER_STALE_AFTER", 5*time.Minute),
-			WorkerID:     env("WORKER_ID", hostname()),
+			HealthAddr:    env("WORKER_HEALTH_ADDR", ":8081"),
+			PollInterval:  durationEnv("WORKER_POLL_INTERVAL", time.Second),
+			StaleAfter:    durationEnv("WORKER_STALE_AFTER", 5*time.Minute),
+			QueueTimeout:  durationEnv("WORKER_QUEUE_TIMEOUT", 10*time.Minute),
+			OutputTimeout: durationEnv("WORKER_OUTPUT_TIMEOUT", 4*time.Minute),
+			WorkerID:      env("WORKER_ID", hostname()),
 		},
 		Provider: ProviderConfig{
 			AllowHTTP:             boolEnv("PROVIDER_ALLOW_HTTP", false),
@@ -186,8 +197,18 @@ func (c Config) Validate() error {
 	if len(c.App.AllowedOrigins) == 0 {
 		return errors.New("at least one ALLOWED_ORIGINS value is required")
 	}
+	publicURL, err := url.Parse(c.App.PublicWebURL)
+	if err != nil || (publicURL.Scheme != "http" && publicURL.Scheme != "https") || publicURL.Host == "" {
+		return errors.New("PUBLIC_WEB_URL must be an absolute HTTP or HTTPS URL")
+	}
+	if strings.TrimSpace(c.App.ClientProductCode) == "" || strings.TrimSpace(c.App.ClientProductName) == "" {
+		return errors.New("CLIENT_PRODUCT_CODE and CLIENT_PRODUCT_NAME are required")
+	}
 	if c.Worker.StaleAfter <= c.Provider.RequestTimeout {
 		return errors.New("WORKER_STALE_AFTER must be greater than PROVIDER_REQUEST_TIMEOUT")
+	}
+	if c.Worker.QueueTimeout <= 0 || c.Worker.OutputTimeout <= c.Provider.RequestTimeout {
+		return errors.New("WORKER_QUEUE_TIMEOUT must be positive and WORKER_OUTPUT_TIMEOUT must exceed PROVIDER_REQUEST_TIMEOUT")
 	}
 	if strings.EqualFold(c.App.Env, "production") {
 		if !c.Security.CookieSecure {

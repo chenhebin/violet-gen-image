@@ -11,7 +11,7 @@ import (
 	"yingyan.local/backend/internal/model"
 )
 
-const LatestVersion = 4
+const LatestVersion = 8
 
 const retouchTicketCreditConstraint = `ALTER TABLE retouch_tickets
 	ADD CONSTRAINT retouch_ticket_credit_equation
@@ -83,7 +83,31 @@ func migrationSteps() []step {
 		{version: 2, name: "generation_title_and_query_indexes", up: generationTitleAndQueryIndexes},
 		{version: 3, name: "generation_model_display_name_snapshot", up: generationModelDisplayNameSnapshot},
 		{version: 4, name: "retouch_credit_equation", up: retouchCreditEquation},
+		{version: 5, name: "generation_deadlines", up: generationDeadlines},
+		{version: 6, name: "provider_observability", up: providerObservability},
+		{version: 7, name: "ai_processing_notice", up: aiProcessingNotice},
+		{version: 8, name: "retouch_quote_expiry_and_sla", up: retouchQuoteExpiryAndSLA},
 	}
+}
+
+func aiProcessingNotice(db *gorm.DB) error {
+	return db.AutoMigrate(&model.UserAIProcessingNotice{})
+}
+
+func retouchQuoteExpiryAndSLA(db *gorm.DB) error {
+	statements := []string{
+		`ALTER TABLE retouch_quotes ADD COLUMN IF NOT EXISTS expires_at timestamptz NOT NULL DEFAULT (CURRENT_TIMESTAMP + interval '48 hours')`,
+		`CREATE INDEX IF NOT EXISTS idx_retouch_quotes_expires_at ON retouch_quotes (expires_at)`,
+		`ALTER TABLE retouch_tickets ADD COLUMN IF NOT EXISTS quote_due_at timestamptz`,
+		`ALTER TABLE retouch_tickets ADD COLUMN IF NOT EXISTS first_delivery_due_at timestamptz`,
+		`ALTER TABLE retouch_tickets ADD COLUMN IF NOT EXISTS revision_due_at timestamptz`,
+	}
+	for _, statement := range statements {
+		if err := db.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func initialSchema(db *gorm.DB) error {
@@ -351,4 +375,39 @@ func retouchCreditEquation(db *gorm.DB) error {
 		return err
 	}
 	return db.Exec(retouchTicketCreditConstraint).Error
+}
+
+func generationDeadlines(db *gorm.DB) error {
+	statements := []string{
+		`ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS timed_out_at timestamptz`,
+		`ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS deadline_at timestamptz`,
+		`ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS timeout_reason varchar(80)`,
+		`CREATE INDEX IF NOT EXISTS idx_generation_jobs_deadline ON generation_jobs (status, deadline_at)`,
+	}
+	for _, statement := range statements {
+		if err := db.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func providerObservability(db *gorm.DB) error {
+	statements := []string{
+		`ALTER TABLE ai_providers ADD COLUMN IF NOT EXISTS last_test_details jsonb`,
+		`ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS last_test_details jsonb`,
+		`ALTER TABLE provider_attempts ADD COLUMN IF NOT EXISTS operation varchar(40) NOT NULL DEFAULT ''`,
+		`ALTER TABLE provider_attempts ADD COLUMN IF NOT EXISTS http_method varchar(10) NOT NULL DEFAULT ''`,
+		`ALTER TABLE provider_attempts ADD COLUMN IF NOT EXISTS endpoint_path varchar(255) NOT NULL DEFAULT ''`,
+		`ALTER TABLE provider_attempts ADD COLUMN IF NOT EXISTS model_name varchar(255) NOT NULL DEFAULT ''`,
+		`ALTER TABLE provider_attempts ADD COLUMN IF NOT EXISTS response_status integer NOT NULL DEFAULT 0`,
+		`ALTER TABLE provider_attempts ADD COLUMN IF NOT EXISTS error_kind varchar(40)`,
+		`ALTER TABLE provider_attempts ADD COLUMN IF NOT EXISTS request_summary jsonb`,
+	}
+	for _, statement := range statements {
+		if err := db.Exec(statement).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

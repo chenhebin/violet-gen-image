@@ -38,6 +38,11 @@ const status = ref<RetouchTicketStatus | ''>(
     ? (route.query.status as RetouchTicketStatus)
     : '',
 )
+const slaFilter = ref<'' | 'overdue' | 'due-soon'>(
+  route.query.sla === 'overdue' || route.query.sla === 'due-soon'
+    ? (route.query.sla as 'overdue' | 'due-soon')
+    : '',
+)
 const selectedId = ref('')
 const action = ref<RetouchAction | null>(null)
 
@@ -56,6 +61,7 @@ function currentQuery(page = 1): RetouchTicketQuery {
     pageSize: store.tickets.pageSize,
     keyword: keyword.value.trim() || undefined,
     status: status.value || undefined,
+    sla: slaFilter.value || undefined,
   }
 }
 
@@ -176,6 +182,13 @@ onMounted(async () => {
           </option>
         </select>
       </FormField>
+      <FormField label="SLA 状态" for-id="retouch-sla">
+        <select id="retouch-sla" v-model="slaFilter" class="form-control" @change="load()">
+          <option value="">全部 SLA</option>
+          <option value="due-soon">即将逾期（24 小时内）</option>
+          <option value="overdue">已逾期</option>
+        </select>
+      </FormField>
       <template #actions>
         <BaseButton @click="load()">
           <template #icon><Search :size="16" /></template>
@@ -217,7 +230,13 @@ onMounted(async () => {
                 <UserStatusBadge :status="ticket.user.status" />
               </div>
             </td>
-            <td><RetouchStatusBadge :status="ticket.status" /></td>
+            <td>
+              <div class="status-cell">
+                <RetouchStatusBadge :status="ticket.status" />
+                <small v-if="ticket.sla.overdue" class="sla-overdue">已逾期</small>
+                <small v-else-if="ticket.sla.remainingSeconds !== null && ticket.sla.remainingSeconds <= 24 * 60 * 60" class="sla-soon">即将逾期</small>
+              </div>
+            </td>
             <td class="mono">{{ ticket.quoteCredits ? `${ticket.quoteCredits} 次` : '待定' }}</td>
             <td class="muted-cell">{{ formatDateTime(ticket.updatedAt) }}</td>
             <td class="row-action">
@@ -327,6 +346,20 @@ tbody tr {
   color: var(--ink-muted);
   font-size: 11px;
 }
+
+.status-cell {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.status-cell small {
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.sla-overdue { color: var(--danger); }
+.sla-soon { color: var(--warning); }
 
 .row-action {
   text-align: right;

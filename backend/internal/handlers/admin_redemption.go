@@ -128,13 +128,18 @@ func (h *AdminHandler) RevealRedemptionBatch(c *gin.Context) {
 
 func (h *AdminHandler) ExportRedemptionBatch(c *gin.Context) {
 	batchID := c.Param("batchId")
-	filename, csv, err := h.manage.ExportBatch(c.Request.Context(), batchID)
-	h.audit(c, "redemption_batch.export", "redemption_batch", batchID, "", map[string]any{"filename": filename}, err)
+	format := c.Query("format")
+	value, err := h.manage.ExportBatch(c.Request.Context(), batchID, format)
+	details := map[string]any{"format": format}
+	if value != nil {
+		details = map[string]any{"filename": value.Filename, "format": value.Format, "count": value.Count}
+	}
+	h.audit(c, "redemption_batch.export", "redemption_batch", batchID, "", details, err)
 	if err != nil {
 		respond.Error(c, err)
 		return
 	}
-	respond.OK(c, map[string]any{"filename": filename, "csv": csv})
+	respond.OK(c, value)
 }
 
 func (h *AdminHandler) DisableRedemptionCodes(c *gin.Context) {

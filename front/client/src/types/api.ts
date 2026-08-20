@@ -9,11 +9,20 @@ export interface ApiErrorResponse {
   details?: unknown
 }
 
+export interface PageResult<T> {
+  items: T[]
+  page: number
+  pageSize: number
+  total: number
+  hasMore: boolean
+}
+
 export const ErrorCode = {
   AuthRequired: 1001,
   AccountDisabled: 1002,
   RedemptionRequired: 2001,
   InsufficientCredits: 2002,
+  AINoticeRequired: 2003,
   CodeInvalid: 3001,
   CodeUsed: 3002,
   CodeExpired: 3003,
@@ -22,6 +31,7 @@ export const ErrorCode = {
   DuplicateRequest: 4002,
   TaskFailedRefunded: 5001,
   InvalidPayload: 6001,
+  AssetNotFound: 6002,
   RetouchTaskNotEligible: 7001,
   RetouchTicketAlreadyExists: 7002,
   RetouchTicketNotFound: 7003,
@@ -34,11 +44,13 @@ export const ErrorCode = {
 export class AppError extends Error {
   readonly code: number
   readonly details?: unknown
+  readonly retryAfterSeconds?: number
 
-  constructor(response: ApiErrorResponse) {
+  constructor(response: ApiErrorResponse, retryAfterSeconds?: number) {
     super(response.message)
     this.name = 'AppError'
     this.code = response.code
     this.details = response.details
+    this.retryAfterSeconds = retryAfterSeconds
   }
 }

@@ -53,6 +53,17 @@ export const useAssetStore = defineStore('assets', () => {
     return execute(() => assetApi.getSignedUrl(assetId), true)
   }
 
+  async function refreshPreview(asset: ManagedAsset) {
+    const result = await execute(() => assetApi.getUrl(asset.id))
+    asset.previewUrl = result.url
+    asset.previewUrlExpiresAt = result.expiresAt
+    if (currentAsset.value?.id === asset.id) {
+      currentAsset.value.previewUrl = result.url
+      currentAsset.value.previewUrlExpiresAt = result.expiresAt
+    }
+    return result
+  }
+
   async function setRetained(
     assetId: string,
     retained: boolean,
@@ -86,8 +97,8 @@ export const useAssetStore = defineStore('assets', () => {
     fetchAssets: loadAssets,
     loadAsset,
     getSignedUrl,
+    refreshPreview,
     setRetained,
     cleanup,
   }
 })
-

@@ -68,6 +68,8 @@ interface MockDb {
   prompts: MockPromptVersion[]
   retouchTickets: MockRetouchTicket[]
   idempotency: Record<string, unknown>
+  idempotencyDigests: Record<string, string>
+  aiNoticeVersions: Record<string, string>
 }
 
 const DB_KEY = 'yingyan:mock-db:v1'
@@ -241,6 +243,8 @@ function createSeed(): MockDb {
     ],
     retouchTickets: [],
     idempotency: {},
+    idempotencyDigests: {},
+    aiNoticeVersions: {},
   }
 }
 
@@ -254,6 +258,8 @@ export function readDb(): MockDb {
       prompts: stored.prompts ?? [],
       retouchTickets: stored.retouchTickets ?? [],
       idempotency: stored.idempotency ?? {},
+      idempotencyDigests: stored.idempotencyDigests ?? {},
+      aiNoticeVersions: stored.aiNoticeVersions ?? {},
     }
   }
 
@@ -411,6 +417,28 @@ export function publicRetouchTicket(
   }
   delete result.ownerId
   delete result.acceptedAt
+  const now = Date.now()
+  let stage: RetouchTicket['sla']['stage'] = 'completed'
+  let dueAt: string | null = null
+  if (ticket.status === 'submitted' || ticket.status === 'quote_pending') {
+    stage = 'quote'
+    dueAt = new Date(new Date(ticket.createdAt).getTime() + 24 * 60 * 60_000).toISOString()
+  } else if (ticket.status === 'accepted' || ticket.status === 'processing' || ticket.status === 'awaiting_confirmation') {
+    if (ticket.revision) {
+      stage = 'revision'
+      dueAt = new Date(new Date(ticket.revision.requestedAt).getTime() + 24 * 60 * 60_000).toISOString()
+    } else {
+      stage = 'first-delivery'
+      dueAt = new Date(new Date(ticket.acceptedAt ?? ticket.updatedAt).getTime() + 48 * 60 * 60_000).toISOString()
+    }
+  }
+  const dueMs = dueAt ? Date.parse(dueAt) : 0
+  result.sla = {
+    stage,
+    dueAt,
+    overdue: Boolean(dueMs && dueMs < now),
+    remainingSeconds: dueMs ? Math.max(0, Math.floor((dueMs - now) / 1000)) : null,
+  }
   return result
 }
 
@@ -496,6 +524,11 @@ export function materializeRetouchTicket(
 ): MockRetouchTicket {
   const now = Date.now()
 
+  if (ticket.quote?.status === 'active' && Date.parse(ticket.quote.expiresAt) <= now) {
+    ticket.quote.status = 'expired'
+    ticket.quote.remainingSeconds = 0
+  }
+
   if (ticket.status === 'submitted') {
     const submittedAt = new Date(ticket.createdAt).getTime()
     if (now - submittedAt >= RETOUCH_TICKET_TIMING.quoteDelayMs) {
@@ -506,6 +539,9 @@ export function materializeRetouchTicket(
         id: createId('quote'),
         credits: RETOUCH_TICKET_CONFIG.quoteCredits,
         createdAt: quotedAt,
+        status: 'active',
+        expiresAt: new Date(Date.parse(quotedAt) + 48 * 60 * 60_000).toISOString(),
+        remainingSeconds: 48 * 60 * 60,
       }
       transitionRetouchTicket(
         ticket,

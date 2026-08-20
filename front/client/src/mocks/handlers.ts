@@ -1,6 +1,8 @@
-import { delay, http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse, type DefaultBodyType } from 'msw'
 import type {
   Asset,
+  GenerationTask,
+  PromptReferenceAsset,
   PromptSections,
   PromptVersion,
   RegisterPayload,
@@ -54,7 +56,20 @@ function requireSession() {
   return { db, userId, user }
 }
 
+function maskRedemptionCode(code: string): string {
+  const parts = code.split('-')
+  if (parts.length < 3) return `${code.slice(0, 3)}****${code.slice(-3)}`
+  return parts
+    .map((part, index) => index === 0 || index === parts.length - 1 ? part : '****')
+    .join('-')
+}
+
 let retouchMutationQueue: Promise<void> = Promise.resolve()
+const mockRateWindows = new Map<string, { startedAt: number; count: number }>()
+
+export function resetMockRateLimits(): void {
+  mockRateWindows.clear()
+}
 
 async function withRetouchMutation<T>(operation: () => T | Promise<T>) {
   const previous = retouchMutationQueue
@@ -77,6 +92,89 @@ function retouchIdempotencyKey(
 ): string | null {
   const value = request.headers.get('Idempotency-Key')?.trim()
   return value ? `retouch:${userId}:${operation}:${value}` : null
+}
+
+function retouchIdempotency(
+  db: ReturnType<typeof readDb>,
+  request: Request,
+  userId: string,
+  operation: string,
+  payload: unknown,
+) {
+  const key = retouchIdempotencyKey(request, userId, operation)
+  if (!key) {
+    return {
+      key: null,
+      digest: '',
+      conflict: false,
+      replay: undefined as unknown,
+    }
+  }
+  const digest = requestDigest(payload)
+  const previousDigest = db.idempotencyDigests[key]
+  return {
+    key,
+    digest,
+    conflict: Boolean(previousDigest && previousDigest !== digest),
+    replay: db.idempotency[key],
+  }
+}
+
+function requestDigest(value: unknown): string {
+  if (value === undefined) return ''
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(requestDigest).join(',')}]`
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => `${JSON.stringify(key)}:${requestDigest(item)}`)
+    .join(',')}}`
+}
+
+function userIdempotency(
+  db: ReturnType<typeof readDb>,
+  request: Request,
+  userId: string,
+  path: string,
+  payload: unknown,
+) {
+  const key = request.headers.get('Idempotency-Key')?.trim()
+  if (!key) return { key: null, replay: undefined as unknown }
+  const scope = `user:${userId}:${request.method}:${path}:${key}`
+  const digest = requestDigest(payload)
+  const previousDigest = db.idempotencyDigests[scope]
+  if (previousDigest && previousDigest !== digest) {
+    return { key, conflict: true, scope, replay: undefined as unknown }
+  }
+  return { key, conflict: false, scope, replay: db.idempotency[scope] }
+}
+
+function rateLimited(scope: string, limit: number): HttpResponse<DefaultBodyType> | null {
+  const now = Date.now()
+  const current = mockRateWindows.get(scope)
+  const windowMs = 60_000
+  const entry = !current || now - current.startedAt >= windowMs
+    ? { startedAt: now, count: 1 }
+    : { startedAt: current.startedAt, count: current.count + 1 }
+  mockRateWindows.set(scope, entry)
+  if (entry.count <= limit) return null
+  const retryAfter = Math.max(1, Math.ceil((windowMs - (now - entry.startedAt)) / 1000))
+  return HttpResponse.json(
+    { code: ErrorCode.RateLimited, message: '请求过于频繁，请稍后重试' },
+    { status: 429, headers: { 'Retry-After': String(retryAfter) } },
+  )
+}
+
+function paginate<T>(items: T[], page = 1, pageSize = 20) {
+  const safePage = Math.max(1, page)
+  const safeSize = Math.min(100, Math.max(1, pageSize))
+  const start = (safePage - 1) * safeSize
+  return {
+    items: items.slice(start, start + safeSize),
+    page: safePage,
+    pageSize: safeSize,
+    total: items.length,
+    hasMore: start + safeSize < items.length,
+  }
 }
 
 export const handlers = [
@@ -168,6 +266,54 @@ export const handlers = [
     return ok(currentEntitlement(db, userId))
   }),
 
+  http.get('*/api/notices/ai-processing', async () => {
+    await delay(100)
+    const { db, userId, user } = requireSession()
+    if (!user || !userId) return fail(ErrorCode.AuthRequired, '请先登录', 401)
+    const acknowledged = db.aiNoticeVersions[userId] === 'ai-processing-v2'
+    return ok({
+      version: 'ai-processing-v2',
+      title: '关于第三方 AI 处理的告知',
+      providerDisclosure: '当您主动使用提示词优化或图片生成功能时，映研只会把完成当前任务所需的图片和提示词发送给平台配置的第三方 AI 服务商；不会公开展示您的内容，也不会提供给其他用户。',
+      securitySummary: '平台采用权限隔离、私有存储和短期签名地址保护您的素材。服务商只收到当前任务所需的内容；您的密码、兑换码、次数余额等不会发送给服务商。平台 API Key 由服务端保管，不会向其他用户展示或写入普通日志。',
+      purpose: '仅用于完成您主动点击的提示词优化、文生图和图生图任务，不用于广告或向其他用户展示。',
+      processingScope: ['当前任务所需的原图和参考图（参考图仅用于提示词分析，不会作为图生图输入）', '当前任务的需求、已确认提示词和生成参数', '不会发送您的账号密码、兑换码、次数余额或其他用户信息'],
+      retentionDays: 90,
+      stopUseDescription: '素材默认在任务完成或结束后保留 90 天，用于查看结果和处理关联服务。您可以随时停止后续使用；已经发送给第三方服务商的请求无法撤回。',
+      acknowledged,
+      ...(acknowledged ? { acknowledgedAt: new Date().toISOString() } : {}),
+    })
+  }),
+
+  http.post('*/api/notices/ai-processing/ack', async ({ request }) => {
+    await delay(120)
+    const { db, userId, user } = requireSession()
+    if (!user || !userId) return fail(ErrorCode.AuthRequired, '请先登录', 401)
+    const key = request.headers.get('Idempotency-Key')?.trim()
+    if (!key) return fail(ErrorCode.InvalidPayload, '缺少 Idempotency-Key 请求头', 422)
+    const payload = (await request.json()) as { version?: string }
+    if (payload.version !== 'ai-processing-v2') return fail(ErrorCode.InvalidPayload, '告知版本已更新，请重新加载', 409)
+    const scope = `notice:${userId}:${key}`
+    if (db.idempotency[scope]) return ok(db.idempotency[scope])
+    const acknowledgedAt = new Date().toISOString()
+    db.aiNoticeVersions[userId] = 'ai-processing-v2'
+    const result = {
+      version: 'ai-processing-v2',
+      title: '关于第三方 AI 处理的告知',
+      providerDisclosure: '当您主动使用提示词优化或图片生成功能时，映研只会把完成当前任务所需的图片和提示词发送给平台配置的第三方 AI 服务商；不会公开展示您的内容，也不会提供给其他用户。',
+      securitySummary: '平台采用权限隔离、私有存储和短期签名地址保护您的素材。服务商只收到当前任务所需的内容；您的密码、兑换码、次数余额等不会发送给服务商。平台 API Key 由服务端保管，不会向其他用户展示或写入普通日志。',
+      purpose: '仅用于完成您主动点击的提示词优化、文生图和图生图任务，不用于广告或向其他用户展示。',
+      processingScope: ['当前任务所需的原图和参考图（参考图仅用于提示词分析，不会作为图生图输入）', '当前任务的需求、已确认提示词和生成参数', '不会发送您的账号密码、兑换码、次数余额或其他用户信息'],
+      retentionDays: 90,
+      stopUseDescription: '素材默认在任务完成或结束后保留 90 天，用于查看结果和处理关联服务。您可以随时停止后续使用；已经发送给第三方服务商的请求无法撤回。',
+      acknowledged: true,
+      acknowledgedAt,
+    }
+    db.idempotency[scope] = result
+    writeDb(db)
+    return ok(result)
+  }),
+
   http.get('*/api/usage/ledger', async () => {
     await delay(220)
     const { db, userId, user } = requireSession()
@@ -175,22 +321,52 @@ export const handlers = [
     return ok(db.ledger[userId] ?? [])
   }),
 
+  http.post('*/api/redemptions/preview', async ({ request }) => {
+    const limited = rateLimited('redemption-preview', 20)
+    if (limited) return limited
+    await delay(240)
+    const payload = (await request.json()) as { code: string }
+    const normalized = payload.code.trim().toUpperCase()
+    const db = readDb()
+    const redemption = db.codes.find((item) => item.code === normalized)
+    if (!redemption) return fail(ErrorCode.CodeInvalid, '兑换码无效', 404)
+    if (redemption.redeemedBy) return fail(ErrorCode.CodeUsed, '兑换码已经使用', 409)
+    if (new Date(redemption.expiresAt).getTime() < Date.now()) {
+      return fail(ErrorCode.CodeExpired, '兑换码已过期', 410)
+    }
+    return ok({
+      valid: true as const,
+      credits: redemption.credits,
+      productName: `AI 生图 ${redemption.credits} 次`,
+      maskedCode: maskRedemptionCode(redemption.code),
+      expiresAt: redemption.expiresAt,
+    })
+  }),
+
   http.post('*/api/redemptions/claim', async ({ request }) => {
+    const limited = rateLimited('redemption-claim', 10)
+    if (limited) return limited
     await delay(520)
     const { db, userId, user } = requireSession()
     if (!user || !userId) return fail(ErrorCode.AuthRequired, '请先登录', 401)
 
-    const idempotencyKey = request.headers.get('Idempotency-Key')
-    if (idempotencyKey && db.idempotency[idempotencyKey]) {
-      return ok(db.idempotency[idempotencyKey])
-    }
-
     const payload = (await request.json()) as { code: string }
+    const idempotency = userIdempotency(db, request, userId, '/api/redemptions/claim', payload)
+    if (!idempotency.key) return fail(ErrorCode.InvalidPayload, '缺少 Idempotency-Key 请求头', 422)
+    if (idempotency.conflict) return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+    if (idempotency.replay) return ok(idempotency.replay)
     const normalized = payload.code.trim().toUpperCase()
     const redemption = db.codes.find((item) => item.code === normalized)
     if (!redemption) return fail(ErrorCode.CodeInvalid, '兑换码无效', 404)
     if (redemption.redeemedBy) {
-      return fail(ErrorCode.CodeUsed, '兑换码已经使用', 409)
+      return fail(
+        ErrorCode.CodeUsed,
+        '兑换码已经使用',
+        409,
+        redemption.redeemedBy === userId
+          ? { claimedByCurrentUser: true }
+          : undefined,
+      )
     }
     if (new Date(redemption.expiresAt).getTime() < Date.now()) {
       return fail(ErrorCode.CodeExpired, '兑换码已过期', 410)
@@ -207,10 +383,11 @@ export const handlers = [
       type: 'redemption',
       amount: redemption.credits,
       balanceAfter: entitlement.balance,
-      description: `兑换 ${redemption.code}`,
+      description: `兑换 ${maskRedemptionCode(redemption.code)}`,
     })
     const result = { added: redemption.credits, entitlement }
-    if (idempotencyKey) db.idempotency[idempotencyKey] = result
+    db.idempotencyDigests[idempotency.scope] = requestDigest(payload)
+    db.idempotency[idempotency.scope] = result
     writeDb(db)
     return ok(result)
   }),
@@ -255,40 +432,130 @@ export const handlers = [
       requestedKind === 'source' ||
       requestedKind === 'reference' ||
       requestedKind === 'retouch-reference'
-        ? requestedKind
-        : 'reference'
+      ? requestedKind
+      : 'reference'
+    if ((kind === 'source' || kind === 'reference') && db.aiNoticeVersions[userId] !== 'ai-processing-v2') {
+      return fail(ErrorCode.AINoticeRequired, '请先确认第三方 AI 处理告知', 428)
+    }
+    const role = typeof formData.get('role') === 'string'
+      ? (formData.get('role') as Asset['role'])
+      : undefined
+    const idempotency = userIdempotency(db, request, userId, '/api/assets', {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      kind,
+      role,
+    })
+    if (!idempotency.key) {
+      return fail(ErrorCode.InvalidPayload, '缺少 Idempotency-Key 请求头', 422)
+    }
+    if (idempotency.conflict) {
+      return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+    }
+    if (idempotency.replay) return ok(idempotency.replay as Asset, 201)
     const asset: Asset = {
       id: createId('asset'),
       name: file.name,
       kind,
-      role:
-        typeof formData.get('role') === 'string'
-          ? (formData.get('role') as Asset['role'])
-          : undefined,
+      role,
       mimeType: file.type,
       size: file.size,
       uploadProgress: 100,
     }
     db.assets.push({ ...asset, ownerId: userId })
+    db.idempotencyDigests[idempotency.scope] = requestDigest({
+      name: file.name, type: file.type, size: file.size, kind, role,
+    })
+    db.idempotency[idempotency.scope] = asset
     writeDb(db)
     return ok(asset, 201)
   }),
 
-  http.delete('*/api/assets/:assetId', async ({ params }) => {
+  http.delete('*/api/assets/:assetId', async ({ params, request }) => {
     await delay(100)
     const { db, userId, user } = requireSession()
     if (!user || !userId) return fail(ErrorCode.AuthRequired, '请先登录', 401)
+    const idempotency = userIdempotency(
+      db,
+      request,
+      userId,
+      `/api/assets/${String(params.assetId)}`,
+      { assetId: params.assetId },
+    )
+    if (!idempotency.key) {
+      return fail(ErrorCode.InvalidPayload, '缺少 Idempotency-Key 请求头', 422)
+    }
+    if (idempotency.conflict) {
+      return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+    }
+    if (idempotency.replay !== undefined) return ok(null)
     db.assets = db.assets.filter(
       (asset) => asset.id !== params.assetId || asset.ownerId !== userId,
     )
+    db.idempotencyDigests[idempotency.scope] = requestDigest({ assetId: params.assetId })
+    db.idempotency[idempotency.scope] = null
     writeDb(db)
     return ok(null)
   }),
 
+  http.get('*/api/assets/:assetId/url', async ({ params, request }) => {
+		await delay(60)
+		const { db, userId, user } = requireSession()
+		if (!user || !userId) return fail(ErrorCode.AuthRequired, '请先登录', 401)
+		const asset = db.assets.find((item) => item.id === params.assetId && item.ownerId === userId)
+		if (!asset) return fail(ErrorCode.AssetNotFound, '素材不存在', 404)
+		const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString()
+		const fallback = asset.kind === 'source' ? '/demo/source-portrait.jpg' : '/demo/style-coast.jpg'
+		return ok({ url: fallback, expiresAt, purpose: new URL(request.url).searchParams.get('purpose') ?? 'preview' })
+	}),
+
+  http.post('*/api/prompts/reference-prompt', async ({ request }) => {
+    const { userId } = requireSession()
+    const limited = rateLimited(`reference-prompt:${userId ?? 'anonymous'}`, 12)
+    if (limited) return limited
+    await delay(760)
+    const { db, user } = requireSession()
+    if (!user) return fail(ErrorCode.AuthRequired, '请先登录', 401)
+    if (db.aiNoticeVersions[user.id] !== 'ai-processing-v2') {
+      return fail(ErrorCode.AINoticeRequired, '请先确认第三方 AI 处理告知', 428)
+    }
+    const payload = (await request.json()) as {
+      referenceAssets: PromptReferenceAsset[]
+    }
+    if (!payload.referenceAssets?.length) {
+      return fail(ErrorCode.InvalidPayload, '请先上传参考图', 422)
+    }
+    const valid = payload.referenceAssets.every((reference) =>
+      db.assets.some(
+        (asset) =>
+          asset.id === reference.assetId &&
+          asset.ownerId === user.id &&
+          asset.kind === 'reference',
+      ),
+    )
+    if (!valid) {
+      return fail(ErrorCode.InvalidPayload, '参考图素材不存在或不可用', 422)
+    }
+    return ok({
+      prompt:
+        '主体保持原图人物与身份关系，参考图的清透杂志氛围与自然色彩；' +
+        '柔和侧逆光，50mm 人像镜头，浅景深，背景层次干净；' +
+        '保留真实皮肤纹理与材质细节，画面克制、自然、无水印。',
+      referenceAssets: payload.referenceAssets,
+    })
+  }),
+
   http.post('*/api/prompts/optimize', async ({ request }) => {
+    const { userId } = requireSession()
+    const limited = rateLimited(`prompt-optimize:${userId ?? 'anonymous'}`, 12)
+    if (limited) return limited
     await delay(820)
     const { db, user } = requireSession()
     if (!user) return fail(ErrorCode.AuthRequired, '请先登录', 401)
+    if (db.aiNoticeVersions[user.id] !== 'ai-processing-v2') {
+      return fail(ErrorCode.AINoticeRequired, '请先确认第三方 AI 处理告知', 428)
+    }
     const payload = (await request.json()) as OptimizePromptPayload
     if (payload.source.trim().length < PROMPT_CONFIG.minLength) {
       return fail(ErrorCode.InvalidPayload, '请再具体描述想要的画面', 422)
@@ -315,6 +582,12 @@ export const handlers = [
     ) {
       return fail(ErrorCode.InvalidPayload, '提示词素材不存在或不可用', 422)
     }
+    if (referenceAssets.length > 0 && sourceAssets.length === 0) {
+      return fail(ErrorCode.InvalidPayload, '图生图必须上传待修改原图', 422)
+    }
+    if (referenceAssets.length > 0 && !payload.referencePrompt?.trim()) {
+      return fail(ErrorCode.InvalidPayload, '请先完成参考图提示词分析', 422)
+    }
     const mode =
       sourceAssets.length + referenceAssets.length > 0
         ? 'image-to-image'
@@ -331,6 +604,7 @@ export const handlers = [
       details: '保留真实纹理，优化光影过渡、色彩统一和边缘细节',
       negative: '避免过度磨皮、塑料质感、肢体错误、文字和水印',
       output: '高清成片，细节自然，适合社交媒体与个人保存',
+      referencePrompt: payload.referencePrompt,
     }
     const result: PromptVersion = {
       id: createId('prompt'),
@@ -353,6 +627,10 @@ export const handlers = [
     const { db, user } = requireSession()
     if (!user) return fail(ErrorCode.AuthRequired, '请先登录', 401)
     const payload = (await request.json()) as PromptVersion
+    const idempotency = userIdempotency(db, request, user.id, '/api/prompts/confirm', payload)
+    if (!idempotency.key) return fail(ErrorCode.InvalidPayload, '缺少 Idempotency-Key 请求头', 422)
+    if (idempotency.conflict) return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+    if (idempotency.replay) return ok(idempotency.replay)
     const stored = db.prompts.find(
       (prompt) => prompt.id === payload.id && prompt.ownerId === user.id,
     )
@@ -360,26 +638,34 @@ export const handlers = [
     stored.source = payload.source.trim()
     stored.sections = { ...payload.sections }
     stored.confirmedAt = new Date().toISOString()
-    writeDb(db)
-    return ok({
+    const result = {
       id: stored.id,
       source: stored.source,
       sections: stored.sections,
       confirmedAt: stored.confirmedAt,
-    })
+    }
+    db.idempotencyDigests[idempotency.scope] = requestDigest(payload)
+    db.idempotency[idempotency.scope] = result
+    writeDb(db)
+    return ok(result)
   }),
 
   http.post('*/api/generations', async ({ request }) => {
+    const { userId: sessionUserId } = requireSession()
+    const limited = rateLimited(`generation:${sessionUserId ?? 'anonymous'}`, 8)
+    if (limited) return limited
     await delay(620)
     const { db, userId, user } = requireSession()
     if (!user || !userId) return fail(ErrorCode.AuthRequired, '请先登录', 401)
-
-    const idempotencyKey = request.headers.get('Idempotency-Key')
-    if (idempotencyKey && db.idempotency[idempotencyKey]) {
-      return ok(db.idempotency[idempotencyKey])
+    if (db.aiNoticeVersions[userId] !== 'ai-processing-v2') {
+      return fail(ErrorCode.AINoticeRequired, '请先确认第三方 AI 处理告知', 428)
     }
 
     const payload = (await request.json()) as CreateGenerationPayload
+    const idempotency = userIdempotency(db, request, userId, '/api/generations', payload)
+    if (!idempotency.key) return fail(ErrorCode.InvalidPayload, '缺少 Idempotency-Key 请求头', 422)
+    if (idempotency.conflict) return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+    if (idempotency.replay) return ok(idempotency.replay)
     const assets = payload.assetIds.map((assetId) =>
       db.assets.find(
         (asset) => asset.id === assetId && asset.ownerId === userId,
@@ -517,20 +803,29 @@ export const handlers = [
       refundMaterialized: false,
     }
     db.tasks.unshift(task)
-    if (idempotencyKey) db.idempotency[idempotencyKey] = task
+    const result = {
+      task,
+      entitlement: currentEntitlement(db, userId),
+    }
+    db.idempotencyDigests[idempotency.scope] = requestDigest(payload)
+    db.idempotency[idempotency.scope] = result
     writeDb(db)
-    return ok(task, 202)
+    return ok(result, 202)
   }),
 
-  http.get('*/api/tasks', async () => {
+  http.get('*/api/tasks', async ({ request }) => {
     await delay(220)
     const { db, user } = requireSession()
     if (!user) return fail(ErrorCode.AuthRequired, '请先登录', 401)
-    return ok(
-      db.tasks
-        .filter((task) => task.ownerId === user.id)
-        .map((task) => materializeTask(db, task)),
-    )
+    const url = new URL(request.url)
+    const tasks = db.tasks
+      .filter((task) => task.ownerId === user.id)
+      .map((task) => materializeTask(db, task))
+    return ok(paginate(
+      tasks,
+      Number(url.searchParams.get('page') ?? 1),
+      Number(url.searchParams.get('pageSize') ?? 20),
+    ))
   }),
 
   http.get('*/api/tasks/:taskId', async ({ params }) => {
@@ -543,10 +838,24 @@ export const handlers = [
     return task ? ok(materializeTask(db, task)) : fail(6004, '任务不存在', 404)
   }),
 
-  http.post('*/api/tasks/:taskId/cancel', async ({ params }) => {
+  http.post('*/api/tasks/:taskId/cancel', async ({ params, request }) => {
     await delay(220)
     const { db, userId, user } = requireSession()
     if (!user || !userId) return fail(ErrorCode.AuthRequired, '请先登录', 401)
+    const idempotency = userIdempotency(
+      db,
+      request,
+      userId,
+      `/api/tasks/${String(params.taskId)}/cancel`,
+      { taskId: params.taskId },
+    )
+    if (!idempotency.key) {
+      return fail(ErrorCode.InvalidPayload, '缺少 Idempotency-Key 请求头', 422)
+    }
+    if (idempotency.conflict) {
+      return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+    }
+    if (idempotency.replay) return ok(idempotency.replay as GenerationTask)
     const task = db.tasks.find(
       (item) => item.id === params.taskId && item.ownerId === user.id,
     )
@@ -569,6 +878,8 @@ export const handlers = [
       balanceAfter: entitlement.balance,
       description: `取消任务 ${task.id}，退回次数`,
     })
+    db.idempotencyDigests[idempotency.scope] = requestDigest({ taskId: params.taskId })
+    db.idempotency[idempotency.scope] = task
     writeDb(db)
     return ok(task)
   }),
@@ -586,20 +897,25 @@ export const handlers = [
         return fail(ErrorCode.AuthRequired, '请先登录', 401)
       }
 
-      const idempotencyKey = retouchIdempotencyKey(
+      const idempotency = retouchIdempotency(
+        db,
         request,
         userId,
         'create',
+        { taskId: params.taskId, ...payload },
       )
-      if (!idempotencyKey) {
+      if (!idempotency.key) {
         return fail(
           ErrorCode.InvalidPayload,
           '缺少 Idempotency-Key 请求头',
           400,
         )
       }
-      if (db.idempotency[idempotencyKey]) {
-        return ok(db.idempotency[idempotencyKey] as RetouchTicket, 201)
+      if (idempotency.conflict) {
+        return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+      }
+      if (idempotency.replay) {
+        return ok(idempotency.replay as RetouchTicket, 201)
       }
 
       const task = db.tasks.find(
@@ -726,19 +1042,26 @@ export const handlers = [
         spentCredits: 0,
         refundedCredits: 0,
         deliverables: [],
+        sla: {
+          stage: 'quote',
+          dueAt: new Date(Date.parse(now) + 24 * 60 * 60_000).toISOString(),
+          overdue: false,
+          remainingSeconds: 24 * 60 * 60,
+        },
         createdAt: now,
         updatedAt: now,
       }
       db.retouchTickets.unshift(ticket)
       syncTaskRetouchTicket(db, task.id)
       const result = publicRetouchTicket(ticket)
-      db.idempotency[idempotencyKey] = result
+      db.idempotencyDigests[idempotency.key] = idempotency.digest
+      db.idempotency[idempotency.key] = result
       writeDb(db)
       return ok(result, 201)
     })
   }),
 
-  http.get('*/api/retouch-tickets', async () => {
+  http.get('*/api/retouch-tickets', async ({ request }) => {
     await delay(220)
     const { db, user } = requireSession()
     if (!user) return fail(ErrorCode.AuthRequired, '请先登录', 401)
@@ -752,7 +1075,12 @@ export const handlers = [
           new Date(left.updatedAt).getTime(),
       )
       .map(publicRetouchTicket)
-    return ok(tickets)
+    const url = new URL(request.url)
+    return ok(paginate(
+      tickets,
+      Number(url.searchParams.get('page') ?? 1),
+      Number(url.searchParams.get('pageSize') ?? 20),
+    ))
   }),
 
   http.get('*/api/retouch-tickets/:ticketId', async ({ params }) => {
@@ -780,21 +1108,26 @@ export const handlers = [
       if (!user || !userId) {
         return fail(ErrorCode.AuthRequired, '请先登录', 401)
       }
-      const idempotencyKey = retouchIdempotencyKey(
+      const idempotency = retouchIdempotency(
+        db,
         request,
         userId,
         `accept:${String(params.ticketId)}`,
+        { ticketId: params.ticketId, quoteId: payload.quoteId },
       )
-      if (!idempotencyKey) {
+      if (!idempotency.key) {
         return fail(
           ErrorCode.InvalidPayload,
           '缺少 Idempotency-Key 请求头',
           400,
         )
       }
-      if (db.idempotency[idempotencyKey]) {
+      if (idempotency.conflict) {
+        return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+      }
+      if (idempotency.replay) {
         return ok(
-          db.idempotency[idempotencyKey] as RetouchTicketBalanceResult,
+          idempotency.replay as RetouchTicketBalanceResult,
         )
       }
 
@@ -819,6 +1152,12 @@ export const handlers = [
           409,
         )
       }
+      if (ticket.quote.status !== 'active' || Date.parse(ticket.quote.expiresAt) <= Date.now()) {
+        ticket.quote.status = 'expired'
+        ticket.quote.remainingSeconds = 0
+        writeDb(db)
+        return fail(ErrorCode.RetouchQuoteInvalid, '报价已过期，请等待管理员重新报价', 409)
+      }
 
       const entitlement = currentEntitlement(db, userId)
       if (entitlement.balance < ticket.quote.credits) {
@@ -837,6 +1176,8 @@ export const handlers = [
       entitlement.canCreate = entitlement.balance > 0
       entitlement.status = entitlement.balance > 0 ? 'active' : 'empty'
       db.entitlements[userId] = entitlement
+      ticket.quote.status = 'accepted'
+      ticket.quote.remainingSeconds = 0
       ticket.reservedCredits = ticket.quote.credits
       ticket.acceptedAt = new Date().toISOString()
       transitionRetouchTicket(
@@ -857,7 +1198,8 @@ export const handlers = [
         ticket: publicRetouchTicket(ticket),
         entitlement,
       }
-      db.idempotency[idempotencyKey] = result
+      db.idempotencyDigests[idempotency.key] = idempotency.digest
+      db.idempotency[idempotency.key] = result
       writeDb(db)
       return ok(result)
     })
@@ -874,21 +1216,26 @@ export const handlers = [
       if (!user || !userId) {
         return fail(ErrorCode.AuthRequired, '请先登录', 401)
       }
-      const idempotencyKey = retouchIdempotencyKey(
+      const idempotency = retouchIdempotency(
+        db,
         request,
         userId,
         `cancel:${String(params.ticketId)}`,
+        { ticketId: params.ticketId },
       )
-      if (!idempotencyKey) {
+      if (!idempotency.key) {
         return fail(
           ErrorCode.InvalidPayload,
           '缺少 Idempotency-Key 请求头',
           400,
         )
       }
-      if (db.idempotency[idempotencyKey]) {
+      if (idempotency.conflict) {
+        return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+      }
+      if (idempotency.replay) {
         return ok(
-          db.idempotency[idempotencyKey] as RetouchTicketBalanceResult,
+          idempotency.replay as RetouchTicketBalanceResult,
         )
       }
 
@@ -932,7 +1279,8 @@ export const handlers = [
         ticket: publicRetouchTicket(ticket),
         entitlement,
       }
-      db.idempotency[idempotencyKey] = result
+      db.idempotencyDigests[idempotency.key] = idempotency.digest
+      db.idempotency[idempotency.key] = result
       writeDb(db)
       return ok(result)
     })
@@ -949,20 +1297,25 @@ export const handlers = [
       if (!user || !userId) {
         return fail(ErrorCode.AuthRequired, '请先登录', 401)
       }
-      const idempotencyKey = retouchIdempotencyKey(
+      const idempotency = retouchIdempotency(
+        db,
         request,
         userId,
         `confirm:${String(params.ticketId)}`,
+        { ticketId: params.ticketId },
       )
-      if (!idempotencyKey) {
+      if (!idempotency.key) {
         return fail(
           ErrorCode.InvalidPayload,
           '缺少 Idempotency-Key 请求头',
           400,
         )
       }
-      if (db.idempotency[idempotencyKey]) {
-        return ok(db.idempotency[idempotencyKey] as RetouchTicket)
+      if (idempotency.conflict) {
+        return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+      }
+      if (idempotency.replay) {
+        return ok(idempotency.replay as RetouchTicket)
       }
 
       const ticket = db.retouchTickets.find(
@@ -983,7 +1336,8 @@ export const handlers = [
       transitionRetouchTicket(ticket, 'delivered', '用户已确认人工成片')
       syncTaskRetouchTicket(db, ticket.taskId)
       const result = publicRetouchTicket(ticket)
-      db.idempotency[idempotencyKey] = result
+      db.idempotencyDigests[idempotency.key] = idempotency.digest
+      db.idempotency[idempotency.key] = result
       writeDb(db)
       return ok(result)
     })
@@ -1001,20 +1355,25 @@ export const handlers = [
       if (!user || !userId) {
         return fail(ErrorCode.AuthRequired, '请先登录', 401)
       }
-      const idempotencyKey = retouchIdempotencyKey(
+      const idempotency = retouchIdempotency(
+        db,
         request,
         userId,
         `revision:${String(params.ticketId)}`,
+        { ticketId: params.ticketId, message: payload.message },
       )
-      if (!idempotencyKey) {
+      if (!idempotency.key) {
         return fail(
           ErrorCode.InvalidPayload,
           '缺少 Idempotency-Key 请求头',
           400,
         )
       }
-      if (db.idempotency[idempotencyKey]) {
-        return ok(db.idempotency[idempotencyKey] as RetouchTicket)
+      if (idempotency.conflict) {
+        return fail(ErrorCode.DuplicateRequest, '幂等键已用于不同的请求内容', 409)
+      }
+      if (idempotency.replay) {
+        return ok(idempotency.replay as RetouchTicket)
       }
 
       const ticket = db.retouchTickets.find(
@@ -1058,7 +1417,8 @@ export const handlers = [
       )
       syncTaskRetouchTicket(db, ticket.taskId)
       const result = publicRetouchTicket(ticket)
-      db.idempotency[idempotencyKey] = result
+      db.idempotencyDigests[idempotency.key] = idempotency.digest
+      db.idempotency[idempotency.key] = result
       writeDb(db)
       return ok(result)
     })

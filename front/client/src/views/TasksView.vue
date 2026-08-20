@@ -62,7 +62,7 @@ watch(
 
 async function loadTasks(reportError = true): Promise<void> {
   try {
-    await tasks.load()
+    await tasks.load({ silent: !reportError })
   } catch (caught) {
     if (reportError) {
       toast.error(
@@ -71,6 +71,11 @@ async function loadTasks(reportError = true): Promise<void> {
       )
     }
   }
+}
+
+async function changeTaskPage(nextPage: number): Promise<void> {
+  if (nextPage < 1 || (nextPage > tasks.page && !tasks.hasMore)) return
+  await tasks.load({ page: nextPage })
 }
 
 async function closeDetail(): Promise<void> {
@@ -168,6 +173,12 @@ async function viewRetouchRecord(ticketId: string): Promise<void> {
       @create="router.push('/app/create')"
     />
 
+    <nav v-if="tasks.total > tasks.pageSize" class="pagination" aria-label="任务分页">
+      <button type="button" :disabled="tasks.page <= 1 || tasks.loading" @click="changeTaskPage(tasks.page - 1)">上一页</button>
+      <span>第 {{ tasks.page }} / {{ Math.max(1, Math.ceil(tasks.total / tasks.pageSize)) }} 页</span>
+      <button type="button" :disabled="!tasks.hasMore || tasks.loading" @click="changeTaskPage(tasks.page + 1)">下一页</button>
+    </nav>
+
     <TaskDetailDrawer
       :open="Boolean(taskId)"
       :task="tasks.activeTask"
@@ -194,6 +205,30 @@ async function viewRetouchRecord(ticketId: string): Promise<void> {
   width: min(1180px, calc(100% - 40px));
   padding: 36px 0 60px;
   margin: 0 auto;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 18px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pagination button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.pagination button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
 }
 
 .page-heading {

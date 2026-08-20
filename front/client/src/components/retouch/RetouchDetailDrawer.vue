@@ -10,21 +10,24 @@ import {
   X,
 } from '@lucide/vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import ImageLightbox, {
+  type LightboxImage,
+} from '@/components/base/ImageLightbox.vue'
+import { assetApi } from '@/services/api'
 import RetouchActionModal, {
   type RetouchAction,
 } from './RetouchActionModal.vue'
 import RetouchDeliverables from './RetouchDeliverables.vue'
+import RetouchRequestSection from './RetouchRequestSection.vue'
 import RetouchStatusBadge from './RetouchStatusBadge.vue'
 import RetouchTimeline from './RetouchTimeline.vue'
 import type { RetouchTicket } from '@/types/domain'
-
 const props = defineProps<{
   open: boolean
   ticket: RetouchTicket | null
   loading: boolean
   submitting: boolean
 }>()
-
 const emit = defineEmits<{
   close: []
   acceptQuote: [ticketId: string, quoteId: string]
@@ -33,12 +36,75 @@ const emit = defineEmits<{
   requestRevision: [ticketId: string, message: string]
 }>()
 const pendingAction = ref<RetouchAction | null>(null)
+const selectedPreviewId = ref('')
+const previewUrlOverrides = ref<Record<string, string>>({})
 const canCancel = computed(() =>
   props.ticket
     ? ['submitted', 'quote_pending', 'accepted'].includes(props.ticket.status)
     : false,
 )
+const selectedResults = computed(() =>
+  (props.ticket?.selectedResults ?? []).map((result) => ({
+    ...result,
+    url: previewUrlOverrides.value[`selected:${result.id}`] ?? result.url,
+  })),
+)
+const supplementalAssets = computed(() =>
+  (props.ticket?.supplementalAssets ?? []).map((asset) => ({
+    ...asset,
+    previewUrl:
+      previewUrlOverrides.value[`supplemental:${asset.id}`] ?? asset.previewUrl,
+  })),
+)
+const deliverables = computed(() =>
+  (props.ticket?.deliverables ?? []).map((result) => ({
+    ...result,
+    url: previewUrlOverrides.value[`deliverable:${result.id}`] ?? result.url,
+  })),
+)
+const lightboxImages = computed<LightboxImage[]>(() => [
+  ...selectedResults.value.map((result, index) => ({
+    id: `selected:${result.id}`,
+    src: result.url,
+    alt: `待精修原结果 ${index + 1}`,
+    label: `待精修原结果 ${index + 1}`,
+    meta: `${result.width} × ${result.height}`,
+  })),
+  ...supplementalAssets.value.flatMap((asset) =>
+    asset.previewUrl
+      ? [{
+          id: `supplemental:${asset.id}`,
+          src: asset.previewUrl,
+          alt: asset.name,
+          label: asset.name,
+        }]
+      : [],
+  ),
+  ...deliverables.value.map((result, index) => ({
+    id: `deliverable:${result.id}`,
+    src: result.url,
+    alt: `人工精修成片 ${index + 1}`,
+    label: `人工精修成片 ${index + 1}`,
+    meta: `${result.width} × ${result.height}`,
+  })),
+])
 
+function openPreview(id: string): void {
+  selectedPreviewId.value = id
+}
+
+async function refreshPreview(id: string): Promise<void> {
+  const assetId = id.slice(id.indexOf(':') + 1)
+  try {
+    const signed = await assetApi.getUrl(assetId)
+    previewUrlOverrides.value = {
+      ...previewUrlOverrides.value,
+      [id]: signed.url,
+    }
+  } catch {
+    // Keep the current thumbnail visible when refreshing is unavailable.
+  }
+}
 function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && props.open && !pendingAction.value) emit('close')
 }
@@ -71,10 +137,16 @@ watch(
     pendingAction.value = null
   },
 )
+watch(
+  [() => props.ticket?.id, () => props.open],
+  ([ticketId, open], [previousTicketId]) => {
+    selectedPreviewId.value = ''
+    if (!open || ticketId !== previousTicketId) previewUrlOverrides.value = {}
+  },
+)
 onMounted(() => document.addEventListener('keydown', onKeydown))
 onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 </script>
-
 <template>
   <Teleport to="body">
     <Transition name="drawer">
@@ -113,6 +185,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                 <div>
                   <span><Coins :size="15" />报价</span>
                   <strong>{{ ticket.quote?.credits ?? '待定' }} 次</strong>
+                  <small v-if="ticket.quote?.status === 'active'">剩余 {{ Math.ceil(ticket.quote.remainingSeconds / 3600) }} 小时</small>
+                  <small v-else-if="ticket.quote?.status === 'expired'" class="warning-text">报价已过期</small>
                 </div>
                 <div>
                   <span>已结算</span>
@@ -127,46 +201,25 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                   <strong>{{ ticket.revision ? '已使用' : '1 次' }}</strong>
                 </div>
               </div>
+              <p v-if="ticket.sla.stage !== 'completed'" class="sla-note" :class="{ overdue: ticket.sla.overdue }">
+                {{ ticket.sla.overdue ? '当前阶段已逾期' : '当前阶段剩余 ' + Math.ceil((ticket.sla.remainingSeconds ?? 0) / 3600) + ' 小时' }}
+              </p>
             </section>
 
-            <section class="request-section">
-              <header>
-                <div>
-                  <p>精修需求</p>
-                  <h3>提交内容</h3>
-                </div>
-                <span>{{ ticket.selectedResults.length }} 张原结果</span>
-              </header>
+            <RetouchRequestSection
+              :selected-results="selectedResults"
+              :supplemental-assets="supplementalAssets"
+              :requirement="ticket.requirement"
+              :revision="ticket.revision"
+              @preview="openPreview"
+              @image-error="refreshPreview"
+            />
 
-              <div class="media-strip">
-                <figure v-for="(result, index) in ticket.selectedResults" :key="result.id">
-                  <img :src="result.url" :alt="`待精修原结果 ${index + 1}`" />
-                  <figcaption>原结果 {{ index + 1 }}</figcaption>
-                </figure>
-              </div>
-
-              <div class="requirement-copy">
-                <strong>处理要求</strong>
-                <p>{{ ticket.requirement }}</p>
-              </div>
-
-              <div v-if="ticket.supplementalAssets.length" class="supplemental">
-                <strong>补充参考</strong>
-                <div class="asset-row">
-                  <figure v-for="asset in ticket.supplementalAssets" :key="asset.id">
-                    <img v-if="asset.previewUrl" :src="asset.previewUrl" :alt="asset.name" />
-                    <span>{{ asset.name }}</span>
-                  </figure>
-                </div>
-              </div>
-
-              <div v-if="ticket.revision" class="revision-note">
-                <span><RotateCcw :size="15" />已提交返修要求</span>
-                <p>{{ ticket.revision.message }}</p>
-              </div>
-            </section>
-
-            <RetouchDeliverables :deliverables="ticket.deliverables" />
+            <RetouchDeliverables
+              :deliverables="deliverables"
+              @preview="openPreview"
+              @image-error="refreshPreview"
+            />
             <RetouchTimeline :entries="ticket.timeline" />
           </div>
 
@@ -208,6 +261,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
     </Transition>
   </Teleport>
 
+  <ImageLightbox
+    :open="Boolean(selectedPreviewId)"
+    :images="lightboxImages"
+    :selected-id="selectedPreviewId"
+    @close="selectedPreviewId = ''"
+    @select="selectedPreviewId = $event"
+    @image-error="refreshPreview"
+  />
+
   <RetouchActionModal
     v-if="ticket"
     :action="pendingAction"
@@ -224,6 +286,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   z-index: 76;
   inset: 0;
 }
+.warning-text,
+.sla-note.overdue { color: var(--danger); }
+.sla-note { margin: 12px 0 0; color: var(--primary); font-size: 12px; }
 
 .drawer-scrim {
   position: absolute;
@@ -232,7 +297,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   background: var(--scrim);
   cursor: default;
 }
-
 aside {
   position: absolute;
   top: 0;
@@ -245,7 +309,6 @@ aside {
   background: var(--surface);
   box-shadow: var(--shadow-md);
 }
-
 .drawer-header {
   display: flex;
   align-items: center;
@@ -254,19 +317,15 @@ aside {
   padding: 20px 24px;
   border-bottom: 1px solid var(--border);
 }
-
-.drawer-header p,
-.request-section header p {
+.drawer-header p {
   color: var(--primary);
   font-size: 9px;
   font-weight: 800;
 }
-
 .drawer-header h2 {
   margin-top: 2px;
   font-size: 18px;
 }
-
 .icon-button {
   display: grid;
   width: 44px;
@@ -276,17 +335,14 @@ aside {
   background: transparent;
   color: var(--ink-muted);
 }
-
 .icon-button:hover {
   background: var(--surface-soft);
 }
-
 .drawer-content {
   min-height: 0;
   overflow: auto;
   padding: 22px 24px 36px;
 }
-
 .loading-state {
   display: grid;
   place-items: center;
@@ -294,21 +350,16 @@ aside {
   gap: 12px;
   color: var(--ink-muted);
 }
-
-.overview-heading,
-.request-section > header {
+.overview-heading {
   display: flex;
   align-items: end;
   justify-content: space-between;
   gap: 16px;
 }
-
-.overview-heading time,
-.request-section header > span {
+.overview-heading time {
   color: var(--ink-faint);
   font-size: 10px;
 }
-
 .settlement-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -316,13 +367,11 @@ aside {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
-
 .settlement-grid > div {
   min-width: 0;
   padding: 14px;
   border-right: 1px solid var(--border);
 }
-
 .settlement-grid > div:last-child {
   border-right: 0;
 }
@@ -342,97 +391,6 @@ aside {
 .settlement-grid strong {
   margin-top: 5px;
   font-size: 13px;
-}
-
-.request-section {
-  padding: 24px 0;
-  margin-top: 24px;
-  border-top: 1px solid var(--border);
-}
-
-.request-section h3 {
-  margin-top: 2px;
-  font-size: 16px;
-}
-
-.media-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 16px;
-}
-
-figure {
-  overflow: hidden;
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-soft);
-}
-
-.media-strip img {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-}
-
-.media-strip figcaption,
-.asset-row span {
-  display: block;
-  overflow: hidden;
-  padding: 6px 8px;
-  color: var(--ink-muted);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.requirement-copy,
-.supplemental,
-.revision-note {
-  margin-top: 18px;
-}
-
-.requirement-copy > strong,
-.supplemental > strong {
-  font-size: 11px;
-}
-
-.requirement-copy p,
-.revision-note p {
-  margin-top: 6px;
-  color: var(--ink-muted);
-  font-size: 12px;
-  line-height: 1.7;
-  white-space: pre-wrap;
-}
-
-.asset-row {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.asset-row img {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-}
-
-.revision-note {
-  padding: 14px;
-  border-left: 3px solid var(--warning);
-  background: #fffaf0;
-}
-
-.revision-note span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--warning);
-  font-size: 11px;
-  font-weight: 700;
 }
 
 footer {
@@ -479,11 +437,6 @@ footer {
 
   .settlement-grid > div:nth-child(-n + 2) {
     border-bottom: 1px solid var(--border);
-  }
-
-  .media-strip,
-  .asset-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   footer {

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -34,6 +35,11 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 
 func (r *RateLimiter) Middleware(key func(*gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case "GET", "HEAD", "OPTIONS":
+			c.Next()
+			return
+		}
 		now := r.now()
 		entryKey := key(c)
 
@@ -51,6 +57,11 @@ func (r *RateLimiter) Middleware(key func(*gin.Context) string) gin.HandlerFunc 
 		r.mu.Unlock()
 
 		if !allowed {
+			retryAfter := int(r.window.Seconds())
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+			c.Header("Retry-After", fmt.Sprintf("%d", retryAfter))
 			respond.Error(c, apierror.New(429, apierror.CodeRateLimited, "请求过于频繁，请稍后重试", nil))
 			return
 		}

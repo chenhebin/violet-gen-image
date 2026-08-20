@@ -10,6 +10,7 @@ import (
 	"yingyan.local/backend/internal/asset"
 	"yingyan.local/backend/internal/auth"
 	"yingyan.local/backend/internal/generation"
+	"yingyan.local/backend/internal/notice"
 	"yingyan.local/backend/internal/prompt"
 	"yingyan.local/backend/internal/redemption"
 	"yingyan.local/backend/internal/respond"
@@ -24,6 +25,7 @@ type UserHandler struct {
 	prompts     *prompt.Service
 	generations *generation.Service
 	retouches   *retouch.Service
+	notices     *notice.Service
 }
 
 func NewUserHandler(
@@ -33,11 +35,54 @@ func NewUserHandler(
 	prompts *prompt.Service,
 	generations *generation.Service,
 	retouches *retouch.Service,
+	notices ...*notice.Service,
 ) *UserHandler {
+	var noticeService *notice.Service
+	if len(notices) > 0 {
+		noticeService = notices[0]
+	}
 	return &UserHandler{
 		users: users, redemptions: redemptions, assets: assets,
-		prompts: prompts, generations: generations, retouches: retouches,
+		prompts: prompts, generations: generations, retouches: retouches, notices: noticeService,
 	}
+}
+
+func (h *UserHandler) AINotice(c *gin.Context) {
+	if h.notices == nil {
+		respond.OK(c, map[string]any{"version": notice.CurrentVersion, "acknowledged": true})
+		return
+	}
+	principal, _ := auth.UserPrincipalFrom(c)
+	value, err := h.notices.Get(c.Request.Context(), principal.User.ID)
+	write(c, value, err)
+}
+
+func (h *UserHandler) AckAINotice(c *gin.Context) {
+	var input struct {
+		Version string `json:"version"`
+	}
+	if !bindJSON(c, &input) {
+		return
+	}
+	principal, _ := auth.UserPrincipalFrom(c)
+	value, err := h.notices.Ack(c.Request.Context(), principal.User.ID, input.Version, idempotencyKey(c))
+	write(c, value, err)
+}
+
+func (h *UserHandler) requireAINotice(c *gin.Context, userID string) bool {
+	if h.notices == nil {
+		return true
+	}
+	ok, err := h.notices.IsAcknowledged(c.Request.Context(), userID)
+	if err != nil {
+		respond.Error(c, err)
+		return false
+	}
+	if !ok {
+		respond.Error(c, apierror.New(http.StatusPreconditionRequired, apierror.CodeAINoticeRequired, "请先确认第三方 AI 处理告知", nil))
+		return false
+	}
+	return true
 }
 
 func (h *UserHandler) Me(c *gin.Context) {
@@ -89,19 +134,36 @@ func (h *UserHandler) ClaimRedemption(c *gin.Context) {
 	write(c, value, err)
 }
 
+func (h *UserHandler) PreviewRedemption(c *gin.Context) {
+	var input struct {
+		Code string `json:"code"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		respond.Error(c, apierror.Invalid("请输入兑换码", nil))
+		return
+	}
+	value, err := h.redemptions.Preview(c.Request.Context(), input.Code)
+	write(c, value, err)
+}
+
 func (h *UserHandler) UploadAsset(c *gin.Context) {
 	principal, _ := auth.UserPrincipalFrom(c)
+	kind := c.PostForm("kind")
+	if (kind == asset.KindSource || kind == asset.KindReference) && !h.requireAINotice(c, principal.User.ID) {
+		return
+	}
 	header, err := c.FormFile("file")
 	if err != nil {
 		respond.Error(c, apierror.Invalid("请选择图片文件", nil))
 		return
 	}
-	value, err := h.assets.UploadUser(
+	value, err := h.assets.UploadUserIdempotent(
 		c.Request.Context(),
 		principal.User.ID,
 		header,
-		c.PostForm("kind"),
+		kind,
 		c.PostForm("role"),
+		idempotencyKey(c),
 	)
 	if err != nil {
 		respond.Error(c, err)
@@ -112,12 +174,27 @@ func (h *UserHandler) UploadAsset(c *gin.Context) {
 
 func (h *UserHandler) DeleteAsset(c *gin.Context) {
 	principal, _ := auth.UserPrincipalFrom(c)
-	err := h.assets.DeleteOwned(c.Request.Context(), principal.User.ID, c.Param("assetId"))
+	err := h.assets.DeleteOwnedIdempotent(c.Request.Context(), principal.User.ID, c.Param("assetId"), idempotencyKey(c))
 	if err != nil {
 		respond.Error(c, err)
 		return
 	}
 	respond.NoData(c)
+}
+
+func (h *UserHandler) AssetURL(c *gin.Context) {
+	principal, _ := auth.UserPrincipalFrom(c)
+	assetModel, err := h.assets.GetOwned(c.Request.Context(), principal.User.ID, c.Param("assetId"))
+	if err != nil {
+		respond.Error(c, err)
+		return
+	}
+	signed, err := h.assets.SignedURL(c.Request.Context(), *assetModel, c.DefaultQuery("purpose", "preview"))
+	if err != nil {
+		respond.Error(c, err)
+		return
+	}
+	respond.OK(c, signed)
 }
 
 func (h *UserHandler) OptimizePrompt(c *gin.Context) {
@@ -127,7 +204,24 @@ func (h *UserHandler) OptimizePrompt(c *gin.Context) {
 		return
 	}
 	principal, _ := auth.UserPrincipalFrom(c)
+	if !h.requireAINotice(c, principal.User.ID) {
+		return
+	}
 	value, err := h.prompts.Optimize(c.Request.Context(), principal.User.ID, input)
+	write(c, value, err)
+}
+
+func (h *UserHandler) DescribeReferencePrompt(c *gin.Context) {
+	var input prompt.ReferencePromptInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		respond.Error(c, apierror.Invalid("参考图提示词参数无效", nil))
+		return
+	}
+	principal, _ := auth.UserPrincipalFrom(c)
+	if !h.requireAINotice(c, principal.User.ID) {
+		return
+	}
+	value, err := h.prompts.DescribeReferences(c.Request.Context(), principal.User.ID, input)
 	write(c, value, err)
 }
 
@@ -138,7 +232,7 @@ func (h *UserHandler) ConfirmPrompt(c *gin.Context) {
 		return
 	}
 	principal, _ := auth.UserPrincipalFrom(c)
-	value, err := h.prompts.Confirm(c.Request.Context(), principal.User.ID, input)
+	value, err := h.prompts.Confirm(c.Request.Context(), principal.User.ID, input, idempotencyKey(c))
 	write(c, value, err)
 }
 
@@ -149,6 +243,9 @@ func (h *UserHandler) CreateGeneration(c *gin.Context) {
 		return
 	}
 	principal, _ := auth.UserPrincipalFrom(c)
+	if !h.requireAINotice(c, principal.User.ID) {
+		return
+	}
 	value, err := h.generations.Create(
 		c.Request.Context(),
 		principal.User.ID,
@@ -159,12 +256,21 @@ func (h *UserHandler) CreateGeneration(c *gin.Context) {
 		respond.Error(c, err)
 		return
 	}
-	respond.Success(c, http.StatusAccepted, value)
+	entitlement, err := h.users.Entitlement(c.Request.Context(), principal.User.ID)
+	if err != nil {
+		respond.Error(c, err)
+		return
+	}
+	respond.Success(c, http.StatusAccepted, map[string]any{
+		"task":        value,
+		"entitlement": entitlement,
+	})
 }
 
 func (h *UserHandler) ListTasks(c *gin.Context) {
 	principal, _ := auth.UserPrincipalFrom(c)
-	value, err := h.generations.List(c.Request.Context(), principal.User.ID)
+	page, pageSize := pageQuery(c)
+	value, err := h.generations.List(c.Request.Context(), principal.User.ID, page, pageSize)
 	write(c, value, err)
 }
 
@@ -176,13 +282,14 @@ func (h *UserHandler) GetTask(c *gin.Context) {
 
 func (h *UserHandler) CancelTask(c *gin.Context) {
 	principal, _ := auth.UserPrincipalFrom(c)
-	value, err := h.generations.Cancel(c.Request.Context(), principal.User.ID, c.Param("taskId"))
+	value, err := h.generations.Cancel(c.Request.Context(), principal.User.ID, c.Param("taskId"), idempotencyKey(c))
 	write(c, value, err)
 }
 
 func (h *UserHandler) ListRetouch(c *gin.Context) {
 	principal, _ := auth.UserPrincipalFrom(c)
-	value, err := h.retouches.ListUser(c.Request.Context(), principal.User.ID)
+	page, pageSize := pageQuery(c)
+	value, err := h.retouches.ListUser(c.Request.Context(), principal.User.ID, page, pageSize)
 	write(c, value, err)
 }
 

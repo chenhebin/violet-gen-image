@@ -90,6 +90,14 @@ async function requestSignedUrl(): Promise<void> {
   }
 }
 
+async function refreshAssetPreview(asset: ManagedAsset): Promise<void> {
+  try {
+    await store.refreshPreview(asset)
+  } catch {
+    toast.error('图片预览地址刷新失败')
+  }
+}
+
 async function submitAction(reason: string): Promise<void> {
   const asset = store.currentAsset
   if (!asset || !action.value) return
@@ -201,7 +209,7 @@ onMounted(() => void load())
           @keyup.enter="openAsset(asset)"
         >
           <div class="asset-card__preview">
-            <img v-if="asset.previewUrl && !asset.deletedAt" :src="asset.previewUrl" :alt="asset.name" />
+            <img v-if="asset.previewUrl && !asset.deletedAt" :src="asset.previewUrl" :alt="asset.name" @error="refreshAssetPreview(asset)" />
             <div v-else class="asset-card__missing">
               <ImageOff :size="24" />
               <span>对象已清理</span>

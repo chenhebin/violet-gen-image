@@ -17,6 +17,17 @@ import type {
   UpdateRedemptionBatchPayload,
 } from '@/types/domain'
 
+export type RedemptionExportFormat = 'csv' | 'xianyu'
+
+export interface RedemptionBatchExport {
+  filename: string
+  content: string
+  csv?: string
+  mediaType: string
+  format: RedemptionExportFormat
+  count: number
+}
+
 export const redemptionApi = {
   listCodes(query: RedemptionCodeQuery = {}, signal?: AbortSignal) {
     return apiRequest<PageResult<RedemptionCode>>({
@@ -86,10 +97,11 @@ export const redemptionApi = {
     })
   },
 
-  exportBatch(batchId: string) {
-    return apiRequest<{ filename: string; csv: string }>({
+  exportBatch(batchId: string, format: RedemptionExportFormat = 'csv') {
+    return apiRequest<RedemptionBatchExport>({
       method: 'POST',
       url: `/manage/redemption-batches/${batchId}/export`,
+      params: { format },
       headers: mutationHeaders('export_redemption_batch'),
     })
   },

@@ -9,11 +9,14 @@ import {
 } from 'vitest'
 import { handlers } from '@/mocks/handlers'
 import { resetDb } from '@/mocks/db'
+import { resetMockRateLimits } from '@/mocks/helpers'
 import { authApi } from '@/services/auth'
 import { auditApi } from '@/services/audits'
 import { apiRequest, httpClient } from '@/services/http'
 import { providerApi } from '@/services/providers'
 import { redemptionApi } from '@/services/redemption'
+import { retouchApi } from '@/services/retouch'
+import { dashboardApi } from '@/services/dashboard'
 import { userApi } from '@/services/users'
 import { ErrorCode } from '@/types/api'
 
@@ -43,6 +46,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   resetDb()
+  resetMockRateLimits()
 })
 
 afterAll(() => {
@@ -99,6 +103,64 @@ describe('management mock API', () => {
     expect(
       batches.items.filter((item) => item.name === payload.name),
     ).toHaveLength(1)
+
+    await expect(
+      apiRequest({
+        method: 'POST',
+        url: '/manage/redemption-batches',
+        data: { ...payload, quantity: 3 },
+        headers: { 'Idempotency-Key': 'idem-test-create-batch' },
+      }),
+    ).rejects.toEqual(
+      expect.objectContaining({ code: ErrorCode.DuplicateRequest }),
+    )
+  })
+
+  it('exposes SLA metrics and accepts a fresh quote with a 48-hour expiry', async () => {
+    await loginAdmin()
+    const dashboard = await dashboardApi.get()
+    expect(dashboard.metrics.map((metric) => metric.key)).toEqual(
+      expect.arrayContaining(['overdueTickets', 'dueSoonTickets']),
+    )
+
+    const tickets = await retouchApi.list({ status: 'submitted', pageSize: 100 })
+    const quoted = await retouchApi.quote(tickets.items[0].id, 2, '按需求评估')
+    expect(quoted.status).toBe('quote_pending')
+    expect(quoted.quote?.status).toBe('active')
+    expect(quoted.quote?.remainingSeconds).toBeGreaterThanOrEqual(48 * 60 * 60 - 1)
+    expect(quoted.quote?.remainingSeconds).toBeLessThanOrEqual(48 * 60 * 60)
+    expect(Date.parse(quoted.quote!.expiresAt) - Date.parse(quoted.quote!.createdAt)).toBe(48 * 60 * 60_000)
+  })
+
+  it('filters management tickets by overdue and due-soon SLA', async () => {
+    await loginAdmin()
+    const overdue = await retouchApi.list({ sla: 'overdue', pageSize: 100 })
+    const dueSoon = await retouchApi.list({ sla: 'due-soon', pageSize: 100 })
+
+    expect(overdue.items.every((item) => item.sla.overdue)).toBe(true)
+    expect(
+      dueSoon.items.every(
+        (item) => !item.sla.overdue && (item.sla.remainingSeconds ?? Infinity) <= 24 * 60 * 60,
+      ),
+    ).toBe(true)
+  })
+
+  it('returns Retry-After when management quote requests exceed the mock limit', async () => {
+    await loginAdmin()
+    const tickets = await retouchApi.list({ status: 'submitted', pageSize: 100 })
+    const ticketId = tickets.items[0].id
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 11 }, (_, index) =>
+        retouchApi.quote(ticketId, index + 1, `限流测试 ${index + 1}`),
+      ),
+    )
+    const rejected = attempts.find(
+      (item): item is PromiseRejectedResult => item.status === 'rejected',
+    )
+    expect(rejected?.reason).toMatchObject({
+      code: ErrorCode.RateLimited,
+      retryAfterSeconds: expect.any(Number),
+    })
   })
 
   it('renames a redemption batch and keeps code references in sync', async () => {
@@ -143,6 +205,30 @@ describe('management mock API', () => {
         message: '批次名称不能为空',
       }),
     )
+  })
+
+  it('exports one URL-encoded Xianyu inventory item per unused code', async () => {
+    await loginAdmin()
+    const batches = await redemptionApi.listBatches({ pageSize: 100 })
+    const target = batches.items.find((item) => item.counts.unused > 0)
+    if (!target) throw new Error('No batch with unused codes')
+
+    const exported = await redemptionApi.exportBatch(target.id, 'xianyu')
+    const lines = exported.content ? exported.content.split('\n') : []
+
+    expect(exported).toMatchObject({
+      format: 'xianyu',
+      mediaType: 'text/plain;charset=utf-8',
+      count: target.counts.unused,
+    })
+    expect(lines).toHaveLength(target.counts.unused)
+    expect(lines[0]).toMatch(
+      /^浏览器打开领取并开始创作吧～：https:\/\/img\.daidaiweb\.cn\/claim\?code=YY-[A-Z0-9-]+ ｜ 兑换码：YY-[A-Z0-9-]+$/,
+    )
+    const [, claimCode, backupCode] = lines[0].match(
+      /\?code=([^ ]+) ｜ 兑换码：(.+)$/,
+    ) ?? []
+    expect(decodeURIComponent(claimCode)).toBe(backupCode)
   })
 
   it('rejects a credit adjustment that would create a negative balance', async () => {

@@ -20,9 +20,38 @@ export class MockApiError extends Error {
     readonly code: number,
     message: string,
     readonly details?: unknown,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message)
   }
+}
+
+const mockRateWindows = new Map<string, { startedAt: number; count: number }>()
+
+export function resetMockRateLimits(): void {
+  mockRateWindows.clear()
+}
+
+export function enforceRateLimit(scope: string, limit: number): void {
+  const now = Date.now()
+  const windowMs = 60_000
+  const current = mockRateWindows.get(scope)
+  const entry = !current || now - current.startedAt >= windowMs
+    ? { startedAt: now, count: 1 }
+    : { startedAt: current.startedAt, count: current.count + 1 }
+  mockRateWindows.set(scope, entry)
+  if (entry.count <= limit) return
+  const retryAfterSeconds = Math.max(
+    1,
+    Math.ceil((windowMs - (now - entry.startedAt)) / 1000),
+  )
+  throw new MockApiError(
+    429,
+    ErrorCode.RateLimited,
+    '请求过于频繁，请稍后重试',
+    undefined,
+    retryAfterSeconds,
+  )
 }
 
 export function ok<T>(
@@ -42,7 +71,12 @@ export function fail(error: MockApiError): HttpResponse<DefaultBodyType> {
       message: error.message,
       ...(error.details === undefined ? {} : { details: error.details }),
     },
-    { status: error.status },
+    {
+      status: error.status,
+      headers: error.retryAfterSeconds
+        ? { 'Retry-After': String(error.retryAfterSeconds) }
+        : undefined,
+    },
   ) as HttpResponse<DefaultBodyType>
 }
 

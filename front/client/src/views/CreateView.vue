@@ -13,6 +13,7 @@ import {
   FileImage,
 } from '@lucide/vue'
 import AssetRail from '@/components/workspace/AssetRail.vue'
+import AIProcessingNoticeModal from '@/components/workspace/AIProcessingNoticeModal.vue'
 import PreviewStage from '@/components/workspace/PreviewStage.vue'
 import PromptPanel from '@/components/workspace/PromptPanel.vue'
 import QuoteBar from '@/components/workspace/QuoteBar.vue'
@@ -21,6 +22,7 @@ import { isFinalTaskStatus } from '@/config'
 import { useEntitlementStore } from '@/stores/entitlement'
 import { useTaskStore } from '@/stores/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { aiNoticeApi, type AIProcessingNotice } from '@/services/api'
 import type { GenerationTask } from '@/types/domain'
 
 const workspace = useWorkspaceStore()
@@ -28,6 +30,9 @@ const entitlement = useEntitlementStore()
 const tasks = useTaskStore()
 const toast = useToast()
 const activeSection = ref('assets')
+const aiNotice = ref<AIProcessingNotice | null>(null)
+const aiNoticeLoading = ref(false)
+const aiNoticeOpen = computed(() => Boolean(aiNotice.value && !aiNotice.value.acknowledged))
 let sectionFrame: number | null = null
 
 const workspaceSections = [
@@ -56,10 +61,31 @@ watch(
 
 onMounted(() => {
   if (!entitlement.entitlement) void entitlement.load()
+  void loadAINotice()
   window.addEventListener('scroll', scheduleActiveSection, { passive: true })
   window.addEventListener('resize', scheduleActiveSection)
   void nextTick(scheduleActiveSection)
 })
+
+async function loadAINotice(): Promise<void> {
+  try {
+    aiNotice.value = await aiNoticeApi.get()
+  } catch (caught) {
+    toast.error('无法加载服务告知', caught instanceof Error ? caught.message : '请稍后重试')
+  }
+}
+
+async function acknowledgeAINotice(): Promise<void> {
+  if (!aiNotice.value) return
+  aiNoticeLoading.value = true
+  try {
+    aiNotice.value = await aiNoticeApi.acknowledge(aiNotice.value.version)
+  } catch (caught) {
+    toast.error('确认未完成', caught instanceof Error ? caught.message : '请稍后重试')
+  } finally {
+    aiNoticeLoading.value = false
+  }
+}
 
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', scheduleActiveSection)
@@ -97,6 +123,22 @@ function scrollToSection(section: string): void {
 
 async function submit(): Promise<void> {
   try {
+    if (aiNoticeOpen.value) {
+      toast.info('请先确认第三方 AI 处理告知', '确认后才能使用提示词优化和生图')
+      return
+    }
+    if (workspace.referenceOptimizationRequired) {
+      await workspace.submit()
+      toast.success('参考图提示词已生成', '请检查并确认优化方案，再生成图片')
+      await nextTick()
+      scrollToSection('prompt')
+      return
+    }
+    if (workspace.promptNeedsConfirmation) {
+      toast.info('请先确认提示词方案', '确认后才能提交生成')
+      scrollToSection('prompt')
+      return
+    }
     const latestQuote = await entitlement.requestQuote(
       workspace.draft.settings.outputCount,
     )
@@ -106,10 +148,20 @@ async function submit(): Promise<void> {
     }
 
     const task = await workspace.submit()
+    if (!task) return
     tasks.upsert(task)
-    entitlement.applyBalance(latestQuote.balance - latestQuote.cost)
+    if (task.entitlement) {
+      entitlement.setFromServer(task.entitlement)
+      await entitlement.refreshLedger()
+    } else {
+      // Keep test doubles and older API deployments safe while the server
+      // response migrates to the authoritative task + entitlement shape.
+      await entitlement.load()
+    }
     toast.success('任务已提交', '生成进度会直接显示在校样台')
-    tasks.monitor(task.id, handleTaskUpdate)
+    tasks.monitor(task.id, handleTaskUpdate, (message) => {
+      toast.error('任务状态同步失败', message)
+    })
     await nextTick()
     scrollToSection('preview')
   } catch (caught) {
@@ -187,12 +239,21 @@ function handleTaskUpdate(task: GenerationTask): void {
               :submitting="workspace.submitting"
               :ready="ready"
               :output-count="workspace.draft.settings.outputCount"
+              :reference-optimization-required="workspace.referenceOptimizationRequired"
+              :prompt-needs-confirmation="workspace.promptNeedsConfirmation"
               @submit="submit"
             />
           </template>
         </PromptPanel>
       </div>
     </div>
+
+    <AIProcessingNoticeModal
+      :open="aiNoticeOpen"
+      :notice="aiNotice"
+      :loading="aiNoticeLoading"
+      @acknowledge="acknowledgeAINotice"
+    />
   </div>
 </template>
 

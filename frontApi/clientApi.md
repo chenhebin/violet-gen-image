@@ -1,9 +1,9 @@
 # 映研 Client API 接口契约
 
-> 文档版本：v0.3  
+> 文档版本：v0.4
 > 面向项目：`front/client` 用户端  
 > 基础路径：`/api`  
-> 更新时间：2026-07-30
+> 更新时间：2026-08-13
 
 本文档是用户端前后端联调和后端实现依据，覆盖当前 Client 已使用的全部接口，以及“AI 生成任务提交人工修图工单”的完整生命周期。人工修图管理项目与 Client 共用同一个后端，其管理接口单独维护在 [`serverApi.md`](./serverApi.md)。
 
@@ -88,7 +88,12 @@ Axios 已配置 `withCredentials: true`。后端应设置 `HttpOnly`、`Secure`�
 以下接口必须支持 `Idempotency-Key`：
 
 - `POST /api/redemptions/claim`
+- `POST /api/notices/ai-processing/ack`
+- `POST /api/assets`
+- `DELETE /api/assets/:assetId`
+- `POST /api/prompts/confirm`
 - `POST /api/generations`
+- `POST /api/tasks/:taskId/cancel`
 - `POST /api/tasks/:taskId/retouch-tickets`
 - `POST /api/retouch-tickets/:ticketId/quote/accept`
 - `POST /api/retouch-tickets/:ticketId/cancel`
@@ -117,17 +122,21 @@ Axios 已配置 `withCredentials: true`。后端应设置 `HttpOnly`、`Secure`�
 | GET | `/api/me` | 当前用户资料 | 否 | `User` |
 | GET | `/api/entitlements` | 当前次数权益 | 否 | `Entitlement` |
 | GET | `/api/usage/ledger` | 次数流水 | 否 | `LedgerEntry[]` |
+| GET | `/api/notices/ai-processing` | 第三方 AI 处理告知与当前确认状态 | 否 | `AIProcessingNotice` |
+| POST | `/api/notices/ai-processing/ack` | 确认当前告知版本 | 是 | `AIProcessingNotice` |
+| POST | `/api/redemptions/preview` | 公开预检兑换码 | 否 | `RedemptionPreview` |
 | POST | `/api/redemptions/claim` | 兑换次数 | 是 | `RedemptionResult` |
 | POST | `/api/usage/quote` | AI 生成报价 | 否 | `UsageQuote` |
-| POST | `/api/assets` | 上传素材 | 否 | `Asset` |
-| DELETE | `/api/assets/:assetId` | 删除素材 | 否 | `null` |
+| POST | `/api/assets` | 上传素材 | 是 | `Asset` |
+| DELETE | `/api/assets/:assetId` | 删除素材 | 是 | `null` |
 | POST | `/api/prompts/optimize` | 优化提示词 | 否 | `PromptVersion` |
-| POST | `/api/prompts/confirm` | 确认提示词 | 否 | `PromptVersion` |
-| POST | `/api/generations` | 创建 AI 任务 | 是 | `GenerationTask` |
-| GET | `/api/tasks` | AI 任务列表 | 否 | `GenerationTask[]` |
+| POST | `/api/prompts/reference-prompt` | 分析参考图并生成参考提示词 | 否 | `ReferencePromptResult` |
+| POST | `/api/prompts/confirm` | 确认提示词 | 是 | `PromptVersion` |
+| POST | `/api/generations` | 创建 AI 任务并返回最新权益 | 是 | `GenerationCreateResult` |
+| GET | `/api/tasks?page=1&pageSize=20` | AI 任务分页列表 | 否 | `PageResult<GenerationTask>` |
 | GET | `/api/tasks/:taskId` | AI 任务详情 | 否 | `GenerationTask` |
-| POST | `/api/tasks/:taskId/cancel` | 取消排队任务 | 否 | `GenerationTask` |
-| GET | `/api/retouch-tickets` | 用户人工工单列表 | 否 | `RetouchTicket[]` |
+| POST | `/api/tasks/:taskId/cancel` | 取消排队任务 | 是 | `GenerationTask` |
+| GET | `/api/retouch-tickets?page=1&pageSize=20` | 用户人工工单分页列表 | 否 | `PageResult<RetouchTicket>` |
 | GET | `/api/retouch-tickets/:ticketId` | 用户人工工单详情 | 否 | `RetouchTicket` |
 | POST | `/api/tasks/:taskId/retouch-tickets` | 从 AI 任务提交人工工单 | 是 | `RetouchTicket` |
 | POST | `/api/retouch-tickets/:ticketId/quote/accept` | 接受报价并预占次数 | 是 | `RetouchTicketBalanceResult` |
@@ -166,10 +175,23 @@ interface RegisterPayload extends AuthPayload {
 }
 
 interface Entitlement {
-  // 当前可用于新请求的次数；人工工单预占后立即减少。
+  // 服务端返回的当前可用次数；前端不得根据报价自行推算余额。
   balance: number
   canCreate: boolean
   status: 'unredeemed' | 'active' | 'empty'
+}
+
+interface AIProcessingNotice {
+  version: string
+  title: string
+  providerDisclosure: string
+  securitySummary: string
+  purpose: string
+  processingScope: string[]
+  retentionDays: number
+  stopUseDescription: string
+  acknowledged: boolean
+  acknowledgedAt?: string
 }
 
 interface LedgerEntry {
@@ -184,6 +206,14 @@ interface LedgerEntry {
 interface RedemptionResult {
   added: number
   entitlement: Entitlement
+}
+
+interface RedemptionPreview {
+  valid: true
+  credits: number
+  productName: string
+  maskedCode: string
+  expiresAt: string | null
 }
 
 interface UsageQuote {
@@ -220,6 +250,7 @@ interface Asset {
   mimeType: string
   size: number
   previewUrl?: string
+  previewUrlExpiresAt?: string
   uploadProgress: number
 }
 
@@ -231,6 +262,7 @@ interface PromptSections {
   details: string
   negative: string
   output: string
+  referencePrompt?: string
 }
 
 interface PromptVersion {
@@ -285,6 +317,19 @@ interface GenerationTask {
   createdAt: string
   updatedAt: string
 }
+
+interface GenerationCreateResult {
+  task: GenerationTask
+  entitlement: Entitlement
+}
+
+interface PageResult<T> {
+  items: T[]
+  page: number
+  pageSize: number
+  total: number
+  hasMore: boolean
+}
 ```
 
 后端不能信任生成请求中由 Client 回传的素材详情、次数成本、用户 ID 或图片 URL，必须根据 ID 和当前登录用户重新查询。
@@ -323,6 +368,16 @@ interface RetouchQuote {
   id: string
   credits: number
   createdAt: string
+  status: 'active' | 'accepted' | 'invalidated' | 'expired'
+  expiresAt: string
+  remainingSeconds: number
+}
+
+interface RetouchSLA {
+  stage: 'quote' | 'first-delivery' | 'revision' | 'completed'
+  dueAt: string | null
+  overdue: boolean
+  remainingSeconds: number | null
 }
 
 interface RetouchRevision {
@@ -346,6 +401,7 @@ interface RetouchTicket {
   refundedCredits: number
   revision?: RetouchRevision
   deliverables: GenerationResult[]
+  sla: RetouchSLA
   createdAt: string
   updatedAt: string
 }
@@ -444,6 +500,20 @@ AuthPayload
 
 成功：HTTP `200`，`ApiSuccessResponse<LedgerEntry[]>`。
 
+#### `GET /api/notices/ai-processing`
+
+用途：读取第三方 AI 处理告知和当前用户是否已确认。首次进入创作工作台时调用；告知版本变化时必须重新确认。
+
+成功：`ApiSuccessResponse<AIProcessingNotice>`。
+
+#### `POST /api/notices/ai-processing/ack`
+
+用途：确认指定告知版本。请求头必须携带 `Idempotency-Key`；确认前可以浏览任务记录，但上传素材、提示词优化、参考图分析和生成接口都会再次校验确认状态。
+
+请求体：`{ "version": "ai-processing-v2" }`。
+
+成功：`ApiSuccessResponse<AIProcessingNotice>`；版本过期返回 `409`。
+
 #### `POST /api/redemptions/claim`
 
 用途：兑换咸鱼订单提供的兑换码。
@@ -468,6 +538,39 @@ AuthPayload
 - `409/3002` 兑换码已使用。
 - `410/3003` 兑换码已过期。
 - `409/3004` 兑换码与当前商品不匹配。
+
+#### `POST /api/redemptions/preview`
+
+用途：在未登录状态下只读预检闲鱼领取链接中的兑换码，用于展示可领取次数、商品名称、掩码和有效期。此接口不核销兑换码、不增加次数，也不保证后续正式领取一定成功。
+
+认证：公开接口，不要求用户 Session。后端按客户端 IP 限制为每分钟最多 20 次。
+
+请求体：
+
+```json
+{
+  "code": "YY-AKK9-XD9M-9DSM"
+}
+```
+
+成功：HTTP `200`，`ApiSuccessResponse<RedemptionPreview>`。
+
+```json
+{
+  "code": 0,
+  "data": {
+    "valid": true,
+    "credits": 10,
+    "productName": "AI 生图服务",
+    "maskedCode": "YY-AKK9-****-9DSM",
+    "expiresAt": "2026-09-30T15:59:59Z"
+  }
+}
+```
+
+主要错误：`404/3001` 无效或已禁用、`409/3002` 已使用、`410/3003` 已过期、`409/3004` 商品不匹配、`429/4001` 请求过于频繁。错误不得返回兑换用户、完整兑换码或内部数据库 ID。
+
+快捷领取页使用 `/claim?code=<完整兑换码>`，首次读取后立即清理 Query；待领取码和重试幂等键只允许存入当前标签页的 `sessionStorage`，成功及明确终态后删除。
 
 #### `POST /api/usage/quote`
 
@@ -516,6 +619,8 @@ AuthPayload
 
 成功：HTTP `201`，`ApiSuccessResponse<Asset>`。
 
+请求头必须携带 `Idempotency-Key`。相同用户、路径和 Key 重试同一文件会返回第一次上传结果；同一 Key 对应不同文件或字段会返回 `409` 幂等冲突。
+
 说明：
 
 - 后端保存素材所有者，后续请求必须验证素材属于当前用户。
@@ -535,7 +640,17 @@ AuthPayload
 
 成功：HTTP `200`，`ApiSuccessResponse<null>`。
 
+请求头必须携带 `Idempotency-Key`，重复删除只返回第一次成功结果。
+
 主要错误：`404/6002` 素材不存在，`409/6001` 素材已被任务使用。
+
+#### `GET /api/assets/:assetId/url`
+
+用途：刷新当前用户素材的短期预览或下载地址。
+
+Query 参数 `purpose` 可选值为 `preview` 或 `download`，默认是 `preview`。
+成功：`ApiSuccessResponse<{ url: string; expiresAt: string }>`。签名地址不会写入数据库，
+`expiresAt` 为 UTC 时间；地址即将过期或加载失败时 Client 可重新请求一次。
 
 ### 3.4 提示词
 
@@ -555,7 +670,8 @@ AuthPayload
       "assetId": "asset_reference_01J...",
       "role": "style"
     }
-  ]
+  ],
+  "referencePrompt": "参考图的清透杂志氛围，50mm 人像镜头，柔和侧逆光，真实材质细节"
 }
 ```
 
@@ -565,6 +681,8 @@ AuthPayload
 - `mode` 为 `text-to-image` 或 `image-to-image`。
 - `sourceAssetIds` 和 `referenceAssets[].assetId` 必须属于当前用户。
 - `referenceAssets[].role` 只能为 `style`、`composition`、`person` 或 `detail`。
+- 图生图必须至少提供一张 `sourceAssetIds`；参考图不能单独作为图生图原图。
+- 第二阶段合并时，`referencePrompt` 是由参考图分析接口返回的文字描述；后端只把原图发送给对话模型和生图模型，参考图不会再次作为生图图片输入。
 - 后端根据素材 ID 读取私有图片并形成模型输入，不能信任 Client 回传的 URL。
 
 成功：HTTP `200`，`ApiSuccessResponse<PromptVersion>`，首次优化不返回 `confirmedAt`。
@@ -586,6 +704,31 @@ AuthPayload
 成功：HTTP `200`，`ApiSuccessResponse<PromptVersion>`，其中 `confirmedAt` 必须存在。
 
 主要错误：`404/6003` 提示词版本不存在，`422/6001` 内容不合法。
+
+#### `POST /api/prompts/reference-prompt`
+
+用途：读取用户上传的参考图，调用对话模型生成一段 Midjourney 风格的参考提示词。该接口只返回文字，不创建生成任务，也不消耗用户次数。
+
+请求体：
+
+```json
+{
+  "referenceAssets": [
+    { "assetId": "asset_reference_01J...", "role": "style" }
+  ]
+}
+```
+
+返回：
+
+```ts
+interface ReferencePromptResult {
+  prompt: string
+  referenceAssets: PromptReferenceAsset[]
+}
+```
+
+提示词至少覆盖主体、场景、风格、镜头与光影、细节修饰。Client 展示并允许用户修改后，再把文字传入 `/api/prompts/optimize` 做最终合并。
 
 ### 3.5 AI 生成
 
@@ -637,11 +780,11 @@ interface CreateGenerationPayload {
 
 #### `GET /api/tasks`
 
-用途：获取当前用户全部 AI 生成任务，按 `createdAt` 倒序返回。
+用途：获取当前用户 AI 生成任务分页，按 `createdAt` 倒序返回。
 
-请求参数：无。
+Query 参数：`page` 默认 `1`，`pageSize` 默认 `20`，最大 `100`。
 
-成功：HTTP `200`，`ApiSuccessResponse<GenerationTask[]>`。
+成功：HTTP `200`，`ApiSuccessResponse<PageResult<GenerationTask>>`。
 
 每条任务按关联情况返回可选字段 `retouchTicket`：
 
@@ -679,9 +822,9 @@ interface CreateGenerationPayload {
 
 用途：加载“人工修图记录”Tab，展示当前用户的工单和状态。
 
-Query 参数：无。
+Query 参数：`page` 默认 `1`，`pageSize` 默认 `20`，最大 `100`。
 
-成功：HTTP `200`，`ApiSuccessResponse<RetouchTicket[]>`，按 `updatedAt` 倒序返回。当前 Client 在前端完成状态筛选和轮询，不使用分页参数。
+成功：HTTP `200`，`ApiSuccessResponse<PageResult<RetouchTicket>>`，按 `updatedAt` 倒序返回。Client 只轮询当前页。
 
 示例：
 

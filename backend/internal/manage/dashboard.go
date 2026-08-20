@@ -14,10 +14,20 @@ func (s *Service) Dashboard(ctx context.Context, retouchOnly bool) (map[string]a
 	if err != nil {
 		return nil, err
 	}
+	overdue, err := s.ListRetouch(ctx, RetouchQuery{Page: 1, PageSize: 1, SLA: "overdue"})
+	if err != nil {
+		return nil, err
+	}
+	dueSoon, err := s.ListRetouch(ctx, RetouchQuery{Page: 1, PageSize: 1, SLA: "due-soon"})
+	if err != nil {
+		return nil, err
+	}
 	if retouchOnly {
 		return map[string]any{
 			"metrics": []map[string]any{
 				{"key": "pendingTickets", "label": "待处理工单", "value": pending.Total, "tone": "warning"},
+				{"key": "overdueTickets", "label": "已逾期工单", "value": overdue.Total, "tone": dashboardTone(overdue.Total, "danger")},
+				{"key": "dueSoonTickets", "label": "即将逾期工单", "value": dueSoon.Total, "tone": dashboardTone(dueSoon.Total, "warning")},
 			},
 			"currentModels":  map[string]any{},
 			"alerts":         []map[string]any{},
@@ -100,6 +110,8 @@ func (s *Service) Dashboard(ctx context.Context, retouchOnly bool) (map[string]a
 			{"key": "creditsGrantedToday", "label": "今日发放次数", "value": creditsToday, "tone": "positive"},
 			{"key": "failedTasks", "label": "今日失败任务", "value": failedTasks, "tone": "danger"},
 			{"key": "pendingTickets", "label": "待处理工单", "value": pending.Total, "tone": "warning"},
+			{"key": "overdueTickets", "label": "已逾期工单", "value": overdue.Total, "tone": dashboardTone(overdue.Total, "danger")},
+			{"key": "dueSoonTickets", "label": "即将逾期工单", "value": dueSoon.Total, "tone": dashboardTone(dueSoon.Total, "warning")},
 		},
 		"currentModels":  models,
 		"alerts":         alerts,
@@ -112,4 +124,11 @@ func ExpiringSoon(code model.RedemptionCode) bool {
 	now := time.Now().UTC()
 	return redemption.Status(code, now) == redemption.StatusUnused &&
 		code.ExpiresAt != nil && code.ExpiresAt.Before(now.Add(7*24*time.Hour))
+}
+
+func dashboardTone(total int64, alertTone string) string {
+	if total > 0 {
+		return alertTone
+	}
+	return "positive"
 }

@@ -43,18 +43,20 @@ export class AppError extends Error {
   readonly code: number
   readonly details?: unknown
   readonly status?: number
+  readonly retryAfterSeconds?: number
 
   constructor(input: {
     code: number
     message: string
     details?: unknown
     status?: number
+    retryAfterSeconds?: number
   }) {
     super(input.message)
     this.name = 'AppError'
     this.code = input.code
     this.details = input.details
     this.status = input.status
+    this.retryAfterSeconds = input.retryAfterSeconds
   }
 }
-

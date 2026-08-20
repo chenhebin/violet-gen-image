@@ -7,12 +7,9 @@ import TaskStatusBadge from '@/components/shared/TaskStatusBadge.vue'
 import { PROMPT_SECTION_LABELS, WORKSPACE_MODE_LABELS } from '@/config'
 import type { ManagedGenerationTask } from '@/types/domain'
 import { formatDateTime, formatFileSize } from '@/utils/format'
-
 defineProps<{ open: boolean; task: ManagedGenerationTask | null; loading: boolean }>()
-
 defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
 </script>
-
 <template>
   <BaseDrawer
     :open="open"
@@ -48,12 +45,10 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
           </div>
         </dl>
       </section>
-
       <section v-if="task.errorMessage" class="error-banner">
         <strong>任务错误</strong>
         <p>{{ task.errorMessage }}</p>
       </section>
-
       <section class="detail-section">
         <header>
           <div>
@@ -73,7 +68,6 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
         </div>
         <p v-else class="empty-copy">任务尚未生成可查看的图片结果</p>
       </section>
-
       <section class="detail-section">
         <header>
           <div>
@@ -93,7 +87,6 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
         </div>
         <p v-else class="empty-copy">文生图任务没有上传输入素材</p>
       </section>
-
       <section class="detail-section requirements">
         <header>
           <div>
@@ -117,7 +110,6 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
           </article>
         </div>
       </section>
-
       <section class="detail-section parameters">
         <header>
           <div>
@@ -161,7 +153,28 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
           </div>
         </dl>
       </section>
-
+      <section v-if="task.providerAttempts?.length" class="detail-section attempts">
+        <header>
+          <div>
+            <span>Provider attempts</span>
+            <h3>服务商执行记录</h3>
+          </div>
+          <b>{{ task.providerAttempts.length }} 次</b>
+        </header>
+        <div class="attempt-list">
+          <article v-for="attempt in task.providerAttempts" :key="attempt.id" class="attempt-row">
+            <div>
+              <strong>{{ attempt.operation }}</strong>
+              <span class="mono">{{ attempt.method }} {{ attempt.path }}</span>
+            </div>
+            <div class="attempt-meta">
+              <span>{{ attempt.status }}</span>
+              <span>{{ attempt.responseStatus || '—' }} · {{ attempt.latencyMs }} ms</span>
+              <span v-if="attempt.errorKind" class="attempt-error">{{ attempt.errorKind }}</span>
+            </div>
+          </article>
+        </div>
+      </section>
       <section v-if="task.retouchTicket" class="retouch-link">
         <div>
           <span>关联人工修图</span>
@@ -180,7 +193,6 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
     </div>
   </BaseDrawer>
 </template>
-
 <style scoped>
 .drawer-loading {
   display: grid;
@@ -188,12 +200,36 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
   place-items: center;
   color: var(--ink-muted);
 }
-
 .task-detail {
   display: grid;
   gap: 18px;
 }
-
+.attempt-list {
+  display: grid;
+  gap: 8px;
+}
+.attempt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+.attempt-row > div:first-child,
+.attempt-meta {
+  display: grid;
+  gap: 4px;
+}
+.attempt-row span,
+.attempt-meta {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+.attempt-error {
+  color: var(--danger);
+}
 .task-spine,
 .detail-section,
 .retouch-link {
@@ -202,12 +238,10 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
   border-radius: var(--radius-md);
   background: var(--surface);
 }
-
 .task-spine {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
 }
-
 .task-spine__status {
   display: grid;
   align-content: center;
@@ -217,7 +251,6 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
   border-right: 1px solid var(--border);
   background: var(--surface-soft);
 }
-
 .task-spine__status > span,
 .detail-section header span,
 .retouch-link span {
@@ -225,18 +258,15 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
   font-size: 10px;
   font-weight: 750;
 }
-
 .task-spine__status small {
   color: var(--ink-muted);
   font-family: var(--font-mono);
   font-size: 10px;
 }
-
 .task-spine dl {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
 }
-
 .task-spine dl > div {
   display: grid;
   align-content: center;
@@ -244,27 +274,22 @@ defineEmits<{ close: []; openRetouch: [ticketId: string] }>()
   padding: 18px;
   border-right: 1px solid var(--border);
 }
-
 .task-spine dl > div:last-child {
   border-right: 0;
 }
-
 dt {
   color: var(--ink-muted);
   font-size: 11px;
 }
-
 dd {
   margin: 0;
   font-size: 12px;
   font-weight: 650;
 }
-
 .task-spine dd {
   font-family: var(--font-mono);
   font-size: 17px;
 }
-
 .error-banner {
   padding: 14px 16px;
   border: 1px solid #edc7c1;
@@ -272,20 +297,16 @@ dd {
   background: var(--danger-soft);
   color: var(--danger);
 }
-
 .error-banner strong {
   font-size: 12px;
 }
-
 .error-banner p {
   margin-top: 3px;
   font-size: 11px;
 }
-
 .detail-section {
   padding: 18px;
 }
-
 .detail-section > header {
   display: flex;
   align-items: center;
@@ -293,59 +314,49 @@ dd {
   gap: 16px;
   margin-bottom: 14px;
 }
-
 .detail-section h3 {
   margin-top: 2px;
   font-size: 15px;
 }
-
 .detail-section header b,
 .detail-section header svg {
   color: var(--ink-muted);
   font-size: 11px;
 }
-
 .media-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 10px;
 }
-
 .media-grid figure {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-soft);
 }
-
 .media-grid img {
   width: 100%;
   aspect-ratio: 4 / 3;
   object-fit: cover;
 }
-
 .media-grid figcaption {
   display: grid;
   gap: 2px;
   padding: 9px 10px;
 }
-
 .media-grid strong {
   overflow: hidden;
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .media-grid span {
   color: var(--ink-muted);
   font-size: 10px;
 }
-
 .media-grid--small {
   grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
 }
-
 .source-requirement {
   padding: 14px;
   margin-bottom: 12px;
@@ -353,44 +364,36 @@ dd {
   border-radius: var(--radius-sm);
   background: var(--primary-soft);
 }
-
 .source-requirement strong,
 .prompt-card span {
   font-size: 11px;
 }
-
 .source-requirement p {
   margin-top: 5px;
   font-size: 13px;
   line-height: 1.7;
 }
-
 .prompt-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
-
 .prompt-grid article {
   min-height: 90px;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
-
 .prompt-grid article:last-child {
   grid-column: 1 / -1;
 }
-
 .prompt-card--empty {
   background: var(--surface-soft);
 }
-
 .prompt-grid span {
   color: var(--primary);
   font-weight: 750;
 }
-
 .prompt-grid p {
   margin-top: 5px;
   color: var(--ink-muted);
@@ -398,7 +401,6 @@ dd {
   line-height: 1.65;
   white-space: pre-wrap;
 }
-
 .parameters dl {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -406,7 +408,6 @@ dd {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
-
 .parameters dl > div {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);
@@ -414,15 +415,12 @@ dd {
   padding: 11px 12px;
   border-bottom: 1px solid var(--border);
 }
-
 .parameters dl > div:nth-child(odd) {
   border-right: 1px solid var(--border);
 }
-
 .parameters dl > div:nth-last-child(-n + 2) {
   border-bottom: 0;
 }
-
 .retouch-link {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -430,64 +428,51 @@ dd {
   gap: 14px;
   padding: 15px 16px;
 }
-
 .retouch-link > div {
   display: grid;
   gap: 3px;
 }
-
 .retouch-link strong {
   font-size: 12px;
 }
-
 .empty-copy {
   padding: 24px;
   color: var(--ink-muted);
   font-size: 12px;
   text-align: center;
 }
-
 @media (max-width: 780px) {
   .task-spine {
     grid-template-columns: 1fr;
   }
-
   .task-spine__status {
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
-
   .task-spine dl {
     grid-template-columns: repeat(2, 1fr);
   }
-
   .task-spine dl > div:nth-child(2) {
     border-right: 0;
   }
-
   .task-spine dl > div:nth-child(-n + 2) {
     border-bottom: 1px solid var(--border);
   }
-
   .prompt-grid,
   .parameters dl {
     grid-template-columns: 1fr;
   }
-
   .prompt-grid article:last-child {
     grid-column: auto;
   }
-
   .parameters dl > div,
   .parameters dl > div:nth-child(odd) {
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
-
   .parameters dl > div:last-child {
     border-bottom: 0;
   }
-
   .retouch-link {
     grid-template-columns: 1fr;
     justify-items: start;

@@ -54,6 +54,11 @@ func TestOptimizePromptWithImageContext(t *testing.T) {
 	if result.Content != "优化后的提示词" || result.RequestID != "req-chat-1" {
 		t.Fatalf("OptimizePrompt() result = %#v", result)
 	}
+	if result.RequestSummary.Path != "/v1/chat/completions" ||
+		result.RequestSummary.Status != http.StatusOK ||
+		result.RequestSummary.RequestID != "req-chat-1" {
+		t.Fatalf("request summary = %#v", result.RequestSummary)
+	}
 	if result.Usage.TotalTokens != 15 {
 		t.Fatalf("Usage = %#v", result.Usage)
 	}
@@ -75,6 +80,47 @@ func TestOptimizePromptWithImageContext(t *testing.T) {
 	imageURL := imageContent["image_url"].(map[string]any)
 	if imageURL["url"] != dataURL {
 		t.Fatal("image data URL was not forwarded")
+	}
+}
+
+func TestProviderRequestsUseMinimalOptionalParametersByDefault(t *testing.T) {
+	t.Parallel()
+	requests := make(chan map[string]any, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(request.Body).Decode(&body)
+		requests <- body
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Path == "/v1/chat/completions" {
+			_, _ = io.WriteString(writer, `{"model":"chat-model","choices":[{"message":{"content":"OK"}}]}`)
+			return
+		}
+		_, _ = io.WriteString(writer, `{"data":[{"b64_json":"`+base64.StdEncoding.EncodeToString(onePixelPNG)+`"}]}`)
+	}))
+	defer server.Close()
+	adapter := newTestAdapter(t, server.URL, Config{})
+	if _, err := adapter.OptimizePrompt(context.Background(), OptimizePromptRequest{Model: "chat-model", Prompt: "hello"}); err != nil {
+		t.Fatalf("OptimizePrompt() error = %v", err)
+	}
+	if _, err := adapter.GenerateTextToImage(context.Background(), TextToImageRequest{Model: "image-model", Prompt: "cat", OutputCount: 1}); err != nil {
+		t.Fatalf("GenerateTextToImage() error = %v", err)
+	}
+	chatBody := <-requests
+	imageBody := <-requests
+	chat := chatBody
+	if _, ok := chat["max_tokens"]; ok {
+		t.Fatalf("chat request unexpectedly included max_tokens: %#v", chat["max_tokens"])
+	}
+	if _, ok := chat["temperature"]; ok {
+		t.Fatalf("chat request unexpectedly included temperature: %#v", chat["temperature"])
+	}
+	if chat["stream"] != false {
+		t.Fatalf("chat stream = %#v, want false", chat["stream"])
+	}
+	for _, key := range []string{"n", "size", "quality", "style"} {
+		if _, ok := imageBody[key]; ok {
+			t.Fatalf("image request unexpectedly included %s: %#v", key, imageBody[key])
+		}
 	}
 }
 

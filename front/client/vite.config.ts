@@ -10,6 +10,12 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8080',
         changeOrigin: true,
+        // The browser may open Vite through a changing LAN IP. The proxy is the
+        // trusted same-origin development gateway, so present its canonical
+        // Client origin to the backend CORS allowlist.
+        headers: {
+          Origin: 'http://127.0.0.1:5173',
+        },
       },
     },
   },

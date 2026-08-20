@@ -25,6 +25,10 @@ export const useRetouchStore = defineStore('retouch', () => {
   const detailLoading = ref(false)
   const actionLoading = ref(false)
   const error = ref('')
+  const page = ref(1)
+  const pageSize = ref(20)
+  const total = ref(0)
+  const hasMore = ref(false)
   let listController: AbortController | null = null
   let detailController: AbortController | null = null
   let actionController: AbortController | null = null
@@ -50,14 +54,22 @@ export const useRetouchStore = defineStore('retouch', () => {
     if (activeTicket.value?.id === ticket.id) activeTicket.value = ticket
   }
 
-  async function load(): Promise<void> {
+  async function load(options: { page?: number; silent?: boolean } = {}): Promise<void> {
     listController?.abort()
     const controller = new AbortController()
     listController = controller
     listLoading.value = true
     error.value = ''
     try {
-      tickets.value = await retouchTicketApi.list(controller.signal)
+      const result = await retouchTicketApi.list(
+        { page: options.page ?? page.value, pageSize: pageSize.value },
+        controller.signal,
+      )
+      tickets.value = result.items
+      page.value = result.page
+      pageSize.value = result.pageSize
+      total.value = result.total
+      hasMore.value = result.hasMore
       if (
         activeTicket.value &&
         tickets.value.some((item) => item.id === activeTicket.value?.id)
@@ -205,7 +217,8 @@ export const useRetouchStore = defineStore('retouch', () => {
         undefined,
         signal,
       )
-      entitlementStore.applyBalance(result.entitlement.balance)
+      entitlementStore.setFromServer(result.entitlement)
+      await entitlementStore.refreshLedger().catch(() => undefined)
       return result.ticket
     })
   }
@@ -218,7 +231,8 @@ export const useRetouchStore = defineStore('retouch', () => {
         undefined,
         signal,
       )
-      entitlementStore.applyBalance(result.entitlement.balance)
+      entitlementStore.setFromServer(result.entitlement)
+      await entitlementStore.refreshLedger().catch(() => undefined)
       return result.ticket
     })
   }
@@ -263,6 +277,10 @@ export const useRetouchStore = defineStore('retouch', () => {
     activeTicket,
     loading,
     hasActiveTickets,
+    page,
+    pageSize,
+    total,
+    hasMore,
     actionLoading,
     error,
     load,

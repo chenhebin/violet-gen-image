@@ -289,6 +289,14 @@ export const providerHandlers = [
           message: success
             ? '认证与响应结构正常'
             : '连接超时，请检查 Base URL',
+          requestSummary: {
+            operation: 'test_connection',
+            method: 'GET',
+            path: '/v1/models',
+            status: success ? 200 : 504,
+            latencyMs: success ? 142 : 3000,
+            errorKind: success ? undefined : 'timeout',
+          },
         }
         provider.updatedAt = testedAt
         appendAudit(db, admin, {
@@ -555,6 +563,19 @@ export const providerHandlers = [
           message: success
             ? '模型能力测试正常'
             : '模型测试失败：服务商连接未通过',
+          requestSummary: {
+            operation: model.type === 'chat' ? 'optimize_prompt' : 'generate_image',
+            method: 'POST',
+            path: model.type === 'chat' ? '/v1/chat/completions' : '/v1/images/generations',
+            model: model.modelId,
+            parameterSummary: {
+              promptLength: 13,
+              imageCount: 0,
+            },
+            status: success ? 200 : 502,
+            latencyMs: 184,
+            errorKind: success ? undefined : 'unavailable',
+          },
         }
         model.updatedAt = model.lastTestAt
         appendAudit(db, admin, {

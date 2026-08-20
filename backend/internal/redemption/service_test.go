@@ -79,3 +79,28 @@ func TestGeneratedCodeShape(t *testing.T) {
 		t.Fatalf("length = %d, want 4", len(value))
 	}
 }
+
+func TestValidateCodeProductAndStatus(t *testing.T) {
+	now := time.Now().UTC()
+	past := now.Add(-time.Hour)
+	userID := "user-1"
+	service := &Service{clientProductCode: "yingyan-client"}
+
+	if err := service.validateCode(model.RedemptionCode{ProductCode: "yingyan-client"}, userID, true); err != nil {
+		t.Fatalf("validateCode(valid) error = %v", err)
+	}
+	for _, test := range []struct {
+		name string
+		code model.RedemptionCode
+	}{
+		{name: "product mismatch", code: model.RedemptionCode{ProductCode: "other-product"}},
+		{name: "expired", code: model.RedemptionCode{ProductCode: "yingyan-client", ExpiresAt: &past}},
+		{name: "used", code: model.RedemptionCode{ProductCode: "yingyan-client", RedeemedAt: &past, RedeemedBy: &userID}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := service.validateCode(test.code, userID, true); err == nil {
+				t.Fatal("validateCode() expected an error")
+			}
+		})
+	}
+}

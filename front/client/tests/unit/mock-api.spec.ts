@@ -2,6 +2,7 @@ import { setupServer } from 'msw/node'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   authApi,
+  aiNoticeApi,
   entitlementApi,
   generationApi,
   promptApi,
@@ -11,7 +12,7 @@ import {
 import { RETOUCH_TICKET_TIMING } from '@/config'
 import { httpClient } from '@/services/http'
 import { AppError, ErrorCode } from '@/types/api'
-import { handlers } from '@/mocks/handlers'
+import { handlers, resetMockRateLimits } from '@/mocks/handlers'
 import { readDb, resetDb, writeDb } from '@/mocks/db'
 
 const server = setupServer(...handlers)
@@ -58,15 +59,35 @@ afterAll(() => {
 
 beforeEach(async () => {
   resetDb()
+  resetMockRateLimits()
   server.resetHandlers()
   await authApi.login({
     email: 'demo@yingyan.local',
     password: 'Demo1234!',
     remember: false,
   })
+  await aiNoticeApi.acknowledge('ai-processing-v2', 'test-ai-notice-ack')
 })
 
 describe('mock API business rules', () => {
+  it('previews a redemption without consuming it', async () => {
+    const preview = await entitlementApi.previewRedemption('YINGYAN-START-10')
+    const before = await entitlementApi.get()
+
+    expect(preview).toMatchObject({
+      valid: true,
+      credits: 10,
+      maskedCode: expect.not.stringContaining('START'),
+    })
+    expect(before.balance).toBe(8)
+
+    const claimed = await entitlementApi.redeem(
+      'YINGYAN-START-10',
+      'preview-then-claim-key',
+    )
+    expect(claimed.entitlement.balance).toBe(18)
+  })
+
   it('redeems exactly once for the same idempotency key', async () => {
     const first = await entitlementApi.redeem(
       'YINGYAN-START-10',
@@ -84,6 +105,17 @@ describe('mock API business rules', () => {
       entitlementApi.redeem('YINGYAN-START-10', 'another-key'),
     ).rejects.toMatchObject({
       code: ErrorCode.CodeUsed,
+      details: { claimedByCurrentUser: true },
+    })
+  })
+
+  it('rejects a redemption idempotency key reused with a different code', async () => {
+    await entitlementApi.redeem('YINGYAN-START-10', 'redeem-conflict-key')
+
+    await expect(
+      entitlementApi.redeem('YINGYAN-SECOND-5', 'redeem-conflict-key'),
+    ).rejects.toMatchObject({
+      code: ErrorCode.DuplicateRequest,
     })
   })
 
@@ -99,6 +131,17 @@ describe('mock API business rules', () => {
       code: ErrorCode.InvalidPayload,
       message: '提示词素材不存在或不可用',
     })
+  })
+
+  it('creates a textual reference prompt before prompt composition', async () => {
+    const result = await promptApi.describeReferences([
+      { assetId: 'asset_demo_ref', role: 'style' },
+    ])
+
+    expect(result.prompt).toContain('杂志氛围')
+    expect(result.referenceAssets).toEqual([
+      { assetId: 'asset_demo_ref', role: 'style' },
+    ])
   })
 
   it('prevents concurrent generation from overdrawing credits', async () => {
@@ -174,6 +217,10 @@ describe('mock API business rules', () => {
       'generation-direct',
     )
 
+    expect(task.entitlement).toMatchObject({
+      balance: 7,
+      canCreate: true,
+    })
     expect(task.prompt).toMatchObject({
       source: '小猫四爪朝天，躺在地上',
       sections: {
@@ -209,6 +256,55 @@ describe('mock API business rules', () => {
       code: ErrorCode.InvalidPayload,
     })
     expect((await entitlementApi.get()).balance).toBe(8)
+  })
+
+  it('rejects a prompt confirmation key reused with different content', async () => {
+    const first = await promptApi.confirm(
+      confirmedPromptId,
+      '第一版需求',
+      {
+        subject: '第一版需求',
+        scene: '',
+        style: '',
+        composition: '',
+        details: '',
+        negative: '',
+        output: '',
+      },
+      'prompt-confirm-conflict',
+    )
+    expect(first.confirmedAt).toBeTruthy()
+
+    await expect(
+      promptApi.confirm(
+        confirmedPromptId,
+        '第二版需求',
+        first.sections,
+        'prompt-confirm-conflict',
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.DuplicateRequest })
+  })
+
+  it('rejects a generation key reused with different settings', async () => {
+    await generationApi.create(
+      {
+        promptVersionId: confirmedPromptId,
+        assetIds: [],
+        settings: { aspectRatio: '1:1', outputCount: 1, referenceStrength: 50 },
+      },
+      'generation-conflict-key',
+    )
+
+    await expect(
+      generationApi.create(
+        {
+          promptVersionId: confirmedPromptId,
+          assetIds: [],
+          settings: { aspectRatio: '3:4', outputCount: 1, referenceStrength: 50 },
+        },
+        'generation-conflict-key',
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.DuplicateRequest })
   })
 
   it('requires an eligible generation task with successful results', async () => {
@@ -254,6 +350,46 @@ describe('mock API business rules', () => {
       createRetouchTicket('retouch-create-duplicate'),
     ).rejects.toMatchObject({
       code: ErrorCode.RetouchTicketAlreadyExists,
+    })
+  })
+
+  it('rejects a retouch creation key reused with different requirements', async () => {
+    const task = await taskApi.get('task_demo_completed')
+    await retouchTicketApi.create(
+      task.id,
+      {
+        selectedResultIds: [task.results[0].id],
+        requirement: '第一版人工要求',
+        supplementalAssetIds: [],
+      },
+      'retouch-create-conflict',
+    )
+
+    await expect(
+      retouchTicketApi.create(
+        task.id,
+        {
+          selectedResultIds: [task.results[0].id],
+          requirement: '第二版人工要求',
+          supplementalAssetIds: [],
+        },
+        'retouch-create-conflict',
+      ),
+    ).rejects.toMatchObject({ code: ErrorCode.DuplicateRequest })
+  })
+
+  it('returns Retry-After when a mock endpoint exceeds its rate limit', async () => {
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 21 }, () =>
+        entitlementApi.previewRedemption('YINGYAN-START-10'),
+      ),
+    )
+    const rejected = attempts.find(
+      (item): item is PromiseRejectedResult => item.status === 'rejected',
+    )
+    expect(rejected?.reason).toMatchObject({
+      code: ErrorCode.RateLimited,
+      retryAfterSeconds: expect.any(Number),
     })
   })
 

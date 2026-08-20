@@ -15,6 +15,7 @@ const (
 	CodeRedemptionUsed      = 3002
 	CodeRedemptionExpired   = 3003
 	CodeProductMismatch     = 3004
+	CodeAINoticeRequired    = 2003
 	CodeRateLimited         = 4001
 	CodeIdempotencyConflict = 4002
 	CodeGenerationFailed    = 5001

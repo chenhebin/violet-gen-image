@@ -10,6 +10,8 @@ const props = defineProps<{
   submitting: boolean
   ready: boolean
   outputCount: number
+  referenceOptimizationRequired: boolean
+  promptNeedsConfirmation: boolean
 }>()
 
 defineEmits<{ submit: [] }>()
@@ -18,6 +20,8 @@ const blockedReason = computed(() => {
   if (!props.quote) return '正在获取本次报价'
   if (!props.quote.canSubmit) return '剩余次数不足，请先兑换新码'
   if (!props.ready) return '填写完整的画面需求后可生成'
+  if (props.referenceOptimizationRequired) return '先根据参考图优化提示词'
+  if (props.promptNeedsConfirmation) return '请先确认当前提示词方案'
   return ''
 })
 
@@ -26,7 +30,8 @@ const disabled = computed(
     props.quoting ||
     props.submitting ||
     !props.quote?.canSubmit ||
-    !props.ready,
+    !props.ready ||
+    props.promptNeedsConfirmation,
 )
 </script>
 
@@ -54,7 +59,9 @@ const disabled = computed(
           ? '正在提交'
           : quote?.canSubmit === false
             ? '次数不足'
-            : '生成图片'
+            : referenceOptimizationRequired
+              ? '根据参考图优化提示词'
+              : '生成图片'
       }}
       <template #icon>
         <ArrowRight v-if="!quoting" :size="17" />

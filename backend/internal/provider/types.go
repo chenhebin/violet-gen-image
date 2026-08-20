@@ -38,10 +38,25 @@ type OptimizePromptRequest struct {
 }
 
 type PromptResult struct {
-	Content   string
-	Model     string
-	RequestID string
-	Usage     Usage
+	Content        string
+	Model          string
+	RequestID      string
+	Usage          Usage
+	RequestSummary CallMetadata
+}
+
+// CallMetadata is a bounded, secret-free description of one provider call.
+// ParameterSummary must contain only counts, lengths, and configuration flags.
+type CallMetadata struct {
+	Operation        string         `json:"operation"`
+	Method           string         `json:"method"`
+	Path             string         `json:"path"`
+	Model            string         `json:"model,omitempty"`
+	ParameterSummary map[string]any `json:"parameterSummary,omitempty"`
+	Status           int            `json:"status,omitempty"`
+	LatencyMillis    int64          `json:"latencyMs"`
+	RequestID        string         `json:"requestId,omitempty"`
+	ErrorKind        string         `json:"errorKind,omitempty"`
 }
 
 type Usage struct {
@@ -79,17 +94,19 @@ type ImageToImageRequest struct {
 }
 
 type GeneratedImage struct {
-	Data          []byte
-	ContentType   string
-	RevisedPrompt string
-	Source        ImageSource
-	RequestID     string
+	Data           []byte
+	ContentType    string
+	RevisedPrompt  string
+	Source         ImageSource
+	RequestID      string
+	RequestSummary CallMetadata
 }
 
 type ConnectionTestResult struct {
-	Latency    time.Duration
-	RequestID  string
-	ModelCount int
+	Latency        time.Duration
+	RequestID      string
+	ModelCount     int
+	RequestSummary CallMetadata
 }
 
 type ModelTestRequest struct {
@@ -100,7 +117,8 @@ type ModelTestRequest struct {
 }
 
 type ModelTestResult struct {
-	Latency   time.Duration
-	RequestID string
-	Model     string
+	Latency        time.Duration
+	RequestID      string
+	Model          string
+	RequestSummary CallMetadata
 }

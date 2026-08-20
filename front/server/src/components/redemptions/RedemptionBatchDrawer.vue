@@ -5,6 +5,7 @@ import {
   Download,
   Eye,
   Layers3,
+  PackageOpen,
   ShieldOff,
 } from '@lucide/vue'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -29,6 +30,7 @@ const emit = defineEmits<{
   revealAll: [batch: RedemptionBatch]
   copy: [value: string, label: string]
   export: [batch: RedemptionBatch]
+  exportXianyu: [batch: RedemptionBatch]
   disable: [batch: RedemptionBatch]
   extend: [batch: RedemptionBatch]
 }>()
@@ -199,6 +201,15 @@ function copyRevealed() {
         </BaseButton>
         <BaseButton
           variant="secondary"
+          :loading="props.exporting"
+          :disabled="!props.batch.counts.unused"
+          @click="emit('exportXianyu', props.batch)"
+        >
+          <PackageOpen :size="16" aria-hidden="true" />
+          导出闲鱼库存
+        </BaseButton>
+        <BaseButton
+          variant="secondary"
           @click="emit('extend', props.batch)"
         >
           <CalendarPlus :size="16" aria-hidden="true" />
@@ -223,12 +234,10 @@ function copyRevealed() {
   color: var(--color-text-muted, #68716f);
   place-content: center;
 }
-
 .drawer-content {
   display: grid;
   gap: 20px;
 }
-
 .batch-identity {
   display: grid;
   grid-template-columns: 50px minmax(0, 1fr) auto;
@@ -239,7 +248,6 @@ function copyRevealed() {
   border-left: 3px solid var(--color-primary, #236c62);
   border-radius: 5px 8px 8px 5px;
 }
-
 .mark {
   display: grid;
   width: 50px;
@@ -250,13 +258,11 @@ function copyRevealed() {
   border-radius: 7px;
   place-items: center;
 }
-
 .batch-identity > div:nth-child(2) {
   display: grid;
   gap: 3px;
   min-width: 0;
 }
-
 .batch-identity span,
 .batch-identity small {
   color: var(--color-text-muted, #68716f);
@@ -454,16 +460,7 @@ dd {
   place-content: center;
 }
 
-.drawer-actions {
-  position: sticky;
-  bottom: -20px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 9px;
-  padding: 14px 0 2px;
-  background: #fff;
-  border-top: 1px solid var(--color-border-soft, #edf0ef);
-}
+.drawer-actions { position: sticky; bottom: -20px; display: flex; justify-content: flex-end; gap: 9px; padding: 14px 0 2px; background: #fff; border-top: 1px solid var(--color-border-soft, #edf0ef); }
 
 @media (max-width: 640px) {
   .batch-identity {

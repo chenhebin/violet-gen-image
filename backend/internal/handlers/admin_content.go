@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -119,15 +118,18 @@ func (h *AdminHandler) GetAsset(c *gin.Context) {
 }
 
 func (h *AdminHandler) SignAsset(c *gin.Context) {
-	value, err := h.manage.GetAsset(c.Request.Context(), c.Param("assetId"))
+	assetModel, err := h.assets.GetByID(c.Request.Context(), c.Param("assetId"))
 	h.audit(c, "asset.signed_url", "asset", c.Param("assetId"), "", nil, err)
 	if err != nil {
 		respond.Error(c, err)
 		return
 	}
-	respond.OK(c, map[string]any{
-		"url": value.PreviewURL, "expiresAt": time.Now().UTC().Add(15 * time.Minute),
-	})
+	signed, err := h.assets.SignedURL(c.Request.Context(), *assetModel, c.DefaultQuery("purpose", "preview"))
+	if err != nil {
+		respond.Error(c, err)
+		return
+	}
+	respond.OK(c, signed)
 }
 
 func (h *AdminHandler) RetainAsset(c *gin.Context) {
@@ -187,7 +189,7 @@ func (h *AdminHandler) ListAudits(c *gin.Context) {
 func (h *AdminHandler) ListRetouchTickets(c *gin.Context) {
 	page, pageSize := pageQuery(c)
 	value, err := h.manage.ListRetouch(c.Request.Context(), manage.RetouchQuery{
-		Page: page, PageSize: pageSize, Search: keywordQuery(c), Status: c.Query("status"),
+		Page: page, PageSize: pageSize, Search: keywordQuery(c), Status: c.Query("status"), SLA: c.Query("sla"),
 	})
 	write(c, value, err)
 }

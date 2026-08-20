@@ -18,6 +18,7 @@ import (
 	"yingyan.local/backend/internal/handlers"
 	"yingyan.local/backend/internal/httpapi"
 	"yingyan.local/backend/internal/manage"
+	"yingyan.local/backend/internal/notice"
 	"yingyan.local/backend/internal/platform/database"
 	"yingyan.local/backend/internal/prompt"
 	"yingyan.local/backend/internal/redemption"
@@ -56,23 +57,26 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 		ResponseHeaderTimeout: cfg.Provider.ResponseHeaderTimeout,
 	})
 	promptService := prompt.New(db, assetService, aiFactory, logger)
-	generationService := generation.New(db, creditService, assetService, promptService)
+	generationService := generation.New(db, creditService, assetService, promptService, cfg.Worker.QueueTimeout)
 	retouchService := retouch.New(db, creditService, assetService, generationService)
 	redemptionService := redemption.New(
 		db, creditService, cfg.Security.EncryptionKey, cfg.Security.RedemptionPepper,
+		cfg.App.ClientProductCode, cfg.App.ClientProductName,
 	)
 	aiConfigService := aiconfig.New(
 		db, aiFactory, cfg.Security.EncryptionKey, cfg.Provider.AllowHTTP,
 	)
 	userService := user.New(db, creditService)
+	noticeService := notice.New(db)
 	manageService := manage.New(
 		db, creditService, redemptionService, assetService,
 		generationService, retouchService, cfg.Security.BcryptCost,
+		cfg.App.PublicWebURL,
 	)
 	auditService := audit.New(db, cfg.Security.TokenPepper)
 	userHandler := handlers.NewUserHandler(
 		userService, redemptionService, assetService, promptService,
-		generationService, retouchService,
+		generationService, retouchService, noticeService,
 	)
 	adminHandler := handlers.NewAdminHandler(
 		manageService, redemptionService, aiConfigService,

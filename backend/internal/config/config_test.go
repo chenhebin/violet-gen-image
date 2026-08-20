@@ -28,6 +28,22 @@ func TestLoadReadsSeedAccountEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoadReadsPublicClaimConfiguration(t *testing.T) {
+	t.Setenv("PUBLIC_WEB_URL", "https://img.example.com/")
+	t.Setenv("CLIENT_PRODUCT_CODE", "image-client")
+	t.Setenv("CLIENT_PRODUCT_NAME", "AI 图片 10 次")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.App.PublicWebURL != "https://img.example.com" ||
+		cfg.App.ClientProductCode != "image-client" ||
+		cfg.App.ClientProductName != "AI 图片 10 次" {
+		t.Fatalf("App claim configuration = %#v", cfg.App)
+	}
+}
+
 func TestSeedAccountsConfigValidate(t *testing.T) {
 	t.Parallel()
 

@@ -7,6 +7,8 @@ import {
 } from '@lucide/vue'
 import { PROMPT_SECTION_OPTIONS } from '@/config'
 import type { GenerationTask } from '@/types/domain'
+import { assetApi } from '@/services/api'
+import { downloadAsset } from '@/utils/download'
 
 const props = defineProps<{ task: GenerationTask }>()
 const selectedResult = ref(0)
@@ -26,6 +28,32 @@ function sectionLabel(key: string): string {
     PROMPT_SECTION_OPTIONS.find((section) => section.key === key)?.label ?? key
   )
 }
+
+async function refreshResult(id: string, target: { url: string }): Promise<void> {
+  try {
+    const signed = await assetApi.getUrl(id)
+    target.url = signed.url
+  } catch {
+    // Keep the task detail usable when the refresh endpoint is unavailable.
+  }
+}
+
+async function refreshAsset(id: string, target: { previewUrl?: string }): Promise<void> {
+	try {
+		const signed = await assetApi.getUrl(id)
+		target.previewUrl = signed.url
+	} catch {
+		// Keep the task detail usable when the refresh endpoint is unavailable.
+	}
+}
+
+async function downloadResult(result: GenerationTask['results'][number]): Promise<void> {
+  await downloadAsset({
+    assetId: result.id,
+    currentUrl: result.downloadUrl || result.url,
+    filename: `映研-${result.id}.jpg`,
+  })
+}
 </script>
 
 <template>
@@ -36,7 +64,7 @@ function sectionLabel(key: string): string {
         <span>{{ task.results.length }} 张</span>
       </div>
       <div class="result-preview">
-        <img :src="selectedUrl" alt="任务生成结果" />
+        <img :src="selectedUrl" alt="任务生成结果" @error="refreshResult(task.results[selectedResult].id, task.results[selectedResult])" />
         <a
           :href="task.results[selectedResult]?.downloadUrl || selectedUrl"
           :download="
@@ -46,6 +74,7 @@ function sectionLabel(key: string): string {
           "
           aria-label="下载当前结果"
           title="下载当前结果"
+          @click.prevent="downloadResult(task.results[selectedResult])"
         >
           <ArrowDownToLine :size="18" />
         </a>
@@ -58,7 +87,7 @@ function sectionLabel(key: string): string {
           :aria-label="`查看第 ${index + 1} 张结果`"
           @click="selectedResult = index"
         >
-          <img :src="result.url" alt="" />
+          <img :src="result.url" alt="" @error="refreshResult(result.id, result)" />
         </button>
       </div>
     </section>
@@ -70,7 +99,7 @@ function sectionLabel(key: string): string {
       </div>
       <div class="asset-grid">
         <div v-for="asset in task.assets" :key="asset.id">
-          <img v-if="asset.previewUrl" :src="asset.previewUrl" :alt="asset.name" />
+          <img v-if="asset.previewUrl" :src="asset.previewUrl" :alt="asset.name" @error="refreshAsset(asset.id, asset)" />
           <span v-else><ImageIcon :size="20" /></span>
           <p>{{ asset.kind === 'source' ? '原图' : '参考图' }}</p>
         </div>

@@ -84,6 +84,9 @@ export const TASK_FINAL_STATUSES = [
 export const TASK_TIMING = {
   monitorPollMs: 1_000,
   listRefreshMs: 1_500,
+  monitorRetryLimit: 3,
+  monitorRetryBaseMs: 1_000,
+  monitorRetryMaxMs: 8_000,
 } as const
 
 export const RETOUCH_TICKET_STATUS_LABELS = {
@@ -153,6 +156,12 @@ export const UI_TIMING = {
 
 export const AUTH_CONFIG = {
   minimumPasswordLength: 8,
+} as const
+
+export const CLAIM_CONFIG = {
+  pendingCodeStorageKey: 'yy_pending_redemption_code',
+  idempotencyStorageKey: 'yy_pending_redemption_idempotency_key',
+  codeMaxLength: 128,
 } as const
 
 export const MOCK_REDEMPTION_CODES = [

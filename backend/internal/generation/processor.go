@@ -20,13 +20,17 @@ import (
 	"yingyan.local/backend/internal/provider"
 )
 
+var ErrDeadlineExceeded = errors.New("generation deadline exceeded")
+
 type Processor struct {
-	db         *gorm.DB
-	credits    *credit.Service
-	assets     *asset.Service
-	factory    *ai.Factory
-	staleAfter time.Duration
-	logger     *slog.Logger
+	db            *gorm.DB
+	credits       *credit.Service
+	assets        *asset.Service
+	factory       *ai.Factory
+	staleAfter    time.Duration
+	queueTimeout  time.Duration
+	outputTimeout time.Duration
+	logger        *slog.Logger
 }
 
 func NewProcessor(
@@ -35,18 +39,30 @@ func NewProcessor(
 	assets *asset.Service,
 	factory *ai.Factory,
 	staleAfter time.Duration,
+	queueTimeout time.Duration,
+	outputTimeout time.Duration,
 	logger *slog.Logger,
 ) *Processor {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if queueTimeout <= 0 {
+		queueTimeout = 10 * time.Minute
+	}
+	if outputTimeout <= 0 {
+		outputTimeout = 4 * time.Minute
+	}
 	return &Processor{
 		db: db, credits: credits, assets: assets, factory: factory,
-		staleAfter: staleAfter, logger: logger,
+		staleAfter: staleAfter, queueTimeout: queueTimeout, outputTimeout: outputTimeout, logger: logger,
 	}
 }
 
 func (p *Processor) ProcessNext(ctx context.Context, workerID string) (bool, error) {
+	expired, err := p.expireQueued(ctx, workerID)
+	if err != nil || expired {
+		return expired, err
+	}
 	recovered, err := p.recoverStale(ctx, workerID)
 	if err != nil || recovered {
 		return recovered, err
@@ -70,6 +86,53 @@ func (p *Processor) ProcessNext(ctx context.Context, workerID string) (bool, err
 	return true, nil
 }
 
+func (p *Processor) expireQueued(ctx context.Context, workerID string) (bool, error) {
+	var expired *model.GenerationJob
+	err := p.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job model.GenerationJob
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where("status = ? AND deadline_at IS NOT NULL AND deadline_at <= ?", JobQueued, time.Now().UTC()).
+			Order("deadline_at ASC").First(&job).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if err := tx.Model(&job).Updates(map[string]any{
+			"status": JobProcessing, "locked_by": workerID, "locked_at": &now,
+			"heartbeat_at": &now, "started_at": &now,
+			"version": gorm.Expr("version + 1"),
+		}).Error; err != nil {
+			return err
+		}
+		if job.OutputID != nil {
+			if err := tx.Model(&model.GenerationOutput{}).
+				Where("id = ? AND status = ?", *job.OutputID, OutputQueued).
+				Updates(map[string]any{"status": OutputProcessing, "started_at": &now}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&model.GenerationTask{}).
+			Where("id = ? AND status = ?", job.TaskID, StatusQueued).
+			Updates(map[string]any{"status": StatusProcessing, "started_at": &now, "version": gorm.Expr("version + 1")}).Error; err != nil {
+			return err
+		}
+		job.Status = JobProcessing
+		job.LockedBy = workerID
+		job.LockedAt = &now
+		job.HeartbeatAt = &now
+		job.StartedAt = &now
+		expired = &job
+		return nil
+	})
+	if err != nil || expired == nil {
+		return expired != nil, err
+	}
+	return true, p.fail(ctx, *expired, fmt.Errorf("%w: queued job timeout", ErrDeadlineExceeded))
+}
+
 func (p *Processor) recoverStale(ctx context.Context, workerID string) (bool, error) {
 	if p.staleAfter <= 0 {
 		return false, nil
@@ -82,9 +145,9 @@ func (p *Processor) recoverStale(ctx context.Context, workerID string) (bool, er
 		cutoff := time.Now().UTC().Add(-p.staleAfter)
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 			Where(
-				"status = ? AND COALESCE(heartbeat_at, locked_at, started_at, created_at) < ?",
-				JobProcessing,
-				cutoff,
+				"status = ? AND ((deadline_at IS NOT NULL AND deadline_at <= ?) OR "+
+					"(deadline_at IS NULL AND COALESCE(heartbeat_at, locked_at, started_at, created_at) < ?))",
+				JobProcessing, time.Now().UTC(), cutoff,
 			).
 			Order("created_at ASC").
 			First(&job).Error
@@ -102,7 +165,8 @@ func (p *Processor) recoverStale(ctx context.Context, workerID string) (bool, er
 			return err
 		}
 		now := time.Now().UTC()
-		if attempts == 0 {
+		deadlineExpired := job.DeadlineAt != nil && !job.DeadlineAt.After(now)
+		if attempts == 0 && !deadlineExpired {
 			if err := tx.Model(&job).Updates(map[string]any{
 				"status":       JobQueued,
 				"locked_by":    "",
@@ -128,6 +192,9 @@ func (p *Processor) recoverStale(ctx context.Context, workerID string) (bool, er
 		}
 
 		summary := "Worker 中断且 Provider 请求结果不确定，任务不会自动重试"
+		if deadlineExpired {
+			summary = "生成输出执行超时，次数已退回"
+		}
 		if err := tx.Model(&model.ProviderAttempt{}).
 			Where("job_id = ? AND status = ?", job.ID, "processing").
 			Updates(map[string]any{
@@ -150,10 +217,14 @@ func (p *Processor) recoverStale(ctx context.Context, workerID string) (bool, er
 		return false, err
 	}
 	if uncertain != nil {
+		cause := errors.New("provider request outcome is unknown after worker interruption")
+		if uncertain.DeadlineAt != nil && !uncertain.DeadlineAt.After(time.Now().UTC()) {
+			cause = fmt.Errorf("%w: output execution timeout", ErrDeadlineExceeded)
+		}
 		return true, p.fail(
 			ctx,
 			*uncertain,
-			errors.New("provider request outcome is unknown after worker interruption"),
+			cause,
 		)
 	}
 	return requeued, nil
@@ -182,6 +253,7 @@ func (p *Processor) claim(ctx context.Context, workerID string) (*model.Generati
 			"heartbeat_at": &now,
 			"started_at":   &now,
 			"attempts":     gorm.Expr("attempts + 1"),
+			"deadline_at":  timePtr(now.Add(p.outputTimeout)),
 			"version":      gorm.Expr("version + 1"),
 		}).Error; err != nil {
 			return err
@@ -236,13 +308,33 @@ func (p *Processor) execute(ctx context.Context, job model.GenerationJob) error 
 	if err != nil {
 		return err
 	}
+	operation, method, endpointPath := "generate_image", "POST", "/v1/images/generations"
+	parameterSummary := map[string]any{
+		"promptLength":   len([]rune(prompt.BuildGenerationPrompt(promptVersion.Source, sections))),
+		"outputCount":    1,
+		"sizeConfigured": true,
+	}
+	if task.Mode == "image-to-image" {
+		operation, endpointPath = "edit_image", "/v1/images/edits"
+		parameterSummary["sourceImageOnly"] = true
+	}
+	initialMetadata := provider.CallMetadata{
+		Operation: operation, Method: method, Path: endpointPath, Model: task.ModelNameSnapshot,
+		ParameterSummary: parameterSummary,
+	}
+	requestSummary, _ := json.Marshal(initialMetadata)
 	attempt := model.ProviderAttempt{
-		JobID:      job.ID,
-		ProviderID: task.ProviderID,
-		ModelID:    task.ModelID,
-		AttemptNo:  max(1, job.Attempts+1),
-		Status:     "processing",
-		StartedAt:  time.Now().UTC(),
+		JobID:          job.ID,
+		ProviderID:     task.ProviderID,
+		ModelID:        task.ModelID,
+		AttemptNo:      max(1, job.Attempts+1),
+		Status:         "processing",
+		Operation:      operation,
+		HTTPMethod:     method,
+		EndpointPath:   endpointPath,
+		ModelName:      task.ModelNameSnapshot,
+		RequestSummary: requestSummary,
+		StartedAt:      time.Now().UTC(),
 	}
 	if err := p.db.WithContext(ctx).Create(&attempt).Error; err != nil {
 		return err
@@ -302,7 +394,10 @@ func (p *Processor) execute(ctx context.Context, job model.GenerationJob) error 
 		now := time.Now().UTC()
 		_ = p.db.WithContext(ctx).Model(&attempt).Updates(map[string]any{
 			"status": "failed", "latency_millis": latency.Milliseconds(),
-			"error_code": "provider_error", "error_summary": safeGenerationError(err), "completed_at": &now,
+			"error_code": "provider_error", "error_kind": providerErrorKind(err),
+			"error_summary": safeGenerationError(err), "completed_at": &now,
+			"response_status": providerResponseStatus(err),
+			"request_summary": providerRequestSummary(err, initialMetadata),
 		}).Error
 		return err
 	}
@@ -327,9 +422,22 @@ func (p *Processor) execute(ctx context.Context, job model.GenerationJob) error 
 	}
 	now := time.Now().UTC()
 	accepted := true
+	metadata := image.RequestSummary
+	if metadata.Operation == "" {
+		metadata = initialMetadata
+	}
+	responseMetadata, _ := json.Marshal(map[string]any{
+		"imageCount":  len(images),
+		"contentType": image.ContentType,
+		"source":      image.Source,
+	})
+	requestSummary, _ = json.Marshal(metadata)
 	_ = p.db.WithContext(ctx).Model(&attempt).Updates(map[string]any{
 		"status": "succeeded", "latency_millis": time.Since(started).Milliseconds(),
 		"external_request_id": image.RequestID, "request_accepted": &accepted, "completed_at": &now,
+		"operation": metadata.Operation, "http_method": metadata.Method, "endpoint_path": metadata.Path,
+		"model_name": metadata.Model, "response_status": metadata.Status,
+		"request_summary": requestSummary, "response_metadata": responseMetadata,
 	}).Error
 	return p.succeed(ctx, job, *created, image.RequestID)
 }
@@ -351,6 +459,28 @@ func providerErrorKind(err error) string {
 		return string(providerErr.Kind)
 	}
 	return "internal"
+}
+
+func providerResponseStatus(err error) int {
+	var providerErr *provider.Error
+	if errors.As(err, &providerErr) {
+		if providerErr.Metadata.Status != 0 {
+			return providerErr.Metadata.Status
+		}
+		return providerErr.StatusCode
+	}
+	return 0
+}
+
+func providerRequestSummary(err error, fallback provider.CallMetadata) []byte {
+	var providerErr *provider.Error
+	metadata := fallback
+	if errors.As(err, &providerErr) && providerErr.Metadata.Operation != "" {
+		metadata = providerErr.Metadata
+	}
+	metadata.ErrorKind = providerErrorKind(err)
+	encoded, _ := json.Marshal(metadata)
+	return encoded
 }
 
 func (p *Processor) succeed(
@@ -428,14 +558,21 @@ func (p *Processor) fail(ctx context.Context, job model.GenerationJob, cause err
 		}
 		now := time.Now().UTC()
 		summary := safeGenerationError(cause)
+		errorCode := "provider_failed"
+		timeoutReason := ""
+		if errors.Is(cause, ErrDeadlineExceeded) {
+			errorCode = "generation_timeout"
+			timeoutReason = "deadline_exceeded"
+		}
 		if err := tx.Model(&output).Updates(map[string]any{
-			"status": OutputFailed, "error_code": "provider_failed",
+			"status": OutputFailed, "error_code": errorCode,
 			"error_summary": summary, "completed_at": &now, "version": gorm.Expr("version + 1"),
 		}).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&model.GenerationJob{}).Where("id = ?", job.ID).Updates(map[string]any{
 			"status": JobFailed, "last_error": summary, "completed_at": &now, "heartbeat_at": &now,
+			"timeout_reason": timeoutReason,
 		}).Error; err != nil {
 			return err
 		}
@@ -446,12 +583,15 @@ func (p *Processor) fail(ctx context.Context, job model.GenerationJob, cause err
 			"failed_outputs":   failed,
 			"refunded_credits": refunded,
 			"status":           status,
-			"error_code":       "provider_failed",
+			"error_code":       errorCode,
 			"error_summary":    summary,
 			"version":          gorm.Expr("version + 1"),
 		}
 		if finishedAt != nil {
 			updates["completed_at"] = finishedAt
+		}
+		if errors.Is(cause, ErrDeadlineExceeded) {
+			updates["timed_out_at"] = &now
 		}
 		return tx.Model(&task).Updates(updates).Error
 	})
@@ -471,7 +611,10 @@ func (p *Processor) imageInputs(
 	closers := make([]io.Closer, 0, len(links))
 	sourceWidth, sourceHeight := 0, 0
 	for _, link := range links {
-		if link.Usage != asset.KindSource && link.Usage != asset.KindReference {
+		// Reference images are consumed by the chat model during prompt
+		// preparation only. The image editing provider receives source images
+		// exclusively, so it cannot reinterpret a style reference as the subject.
+		if link.Usage != asset.KindSource {
 			continue
 		}
 		assetModel, err := p.assets.GetByID(ctx, link.AssetID)
@@ -493,8 +636,8 @@ func (p *Processor) imageInputs(
 			Filename: assetModel.OriginalName, ContentType: assetModel.MIMEType, Reader: reader,
 		})
 	}
-	if len(inputs) == 0 {
-		return nil, nil, 0, 0, errors.New("image-to-image task has no input image")
+	if len(inputs) == 0 || sourceWidth <= 0 || sourceHeight <= 0 {
+		return nil, nil, 0, 0, errors.New("image-to-image task requires a source image")
 	}
 	return inputs, closers, sourceWidth, sourceHeight, nil
 }
@@ -517,4 +660,8 @@ func closeAll(closers []io.Closer) {
 	for _, closer := range closers {
 		_ = closer.Close()
 	}
+}
+
+func timePtr(value time.Time) *time.Time {
+	return &value
 }

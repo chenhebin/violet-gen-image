@@ -92,7 +92,11 @@ httpClient.interceptors.response.use(
       return Promise.reject(error)
     }
 
+    const retryAfter = Number(error.response?.headers?.['retry-after'])
     const appError = toAppError(error.response?.data ?? error.message)
+    if (Number.isFinite(retryAfter) && retryAfter > 0) {
+      Object.defineProperty(appError, 'retryAfterSeconds', { value: retryAfter })
+    }
     notifyAuthenticationFailure(appError)
     return Promise.reject(appError)
   },

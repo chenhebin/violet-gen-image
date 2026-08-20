@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, ref, watch } from 'vue'
 import {
   CircleDollarSign,
   ImageUp,
@@ -8,13 +9,16 @@ import {
 } from '@lucide/vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseDrawer from '@/components/base/BaseDrawer.vue'
+import ImageLightbox, { type LightboxImage } from '@/components/base/ImageLightbox.vue'
 import RetouchStatusBadge from '@/components/shared/RetouchStatusBadge.vue'
 import TaskStatusBadge from '@/components/shared/TaskStatusBadge.vue'
+import { assetApi } from '@/services/assets'
 import { formatDateTime } from '@/utils/format'
 import type { ManageRetouchTicket } from '@/types/domain'
 import type { RetouchAction } from './RetouchActionModal.vue'
+import RetouchTicketMedia from './RetouchTicketMedia.vue'
 
-defineProps<{
+const props = defineProps<{
   open: boolean
   ticket: ManageRetouchTicket | null
   loading: boolean
@@ -24,6 +28,78 @@ defineEmits<{
   close: []
   action: [action: RetouchAction]
 }>()
+
+const selectedPreviewId = ref('')
+const previewUrlOverrides = ref<Record<string, string>>({})
+const selectedResults = computed(() =>
+  (props.ticket?.selectedResults ?? []).map((result) => ({
+    ...result,
+    url: previewUrlOverrides.value[`selected:${result.id}`] ?? result.url,
+  })),
+)
+const supplementalAssets = computed(() =>
+  (props.ticket?.supplementalAssets ?? []).map((asset) => ({
+    ...asset,
+    previewUrl:
+      previewUrlOverrides.value[`supplemental:${asset.id}`] ?? asset.previewUrl,
+  })),
+)
+const deliverables = computed(() =>
+  (props.ticket?.deliverables ?? []).map((result) => ({
+    ...result,
+    url: previewUrlOverrides.value[`deliverable:${result.id}`] ?? result.url,
+  })),
+)
+const lightboxImages = computed<LightboxImage[]>(() => [
+  ...selectedResults.value.map((result, index) => ({
+    id: `selected:${result.id}`,
+    src: result.url,
+    alt: `用户选中的 AI 成片 ${index + 1}`,
+    label: `用户选中的 AI 成片 ${index + 1}`,
+    meta: `${result.width} × ${result.height}`,
+  })),
+  ...supplementalAssets.value.flatMap((asset) =>
+    asset.previewUrl
+      ? [{
+          id: `supplemental:${asset.id}`,
+          src: asset.previewUrl,
+          alt: asset.name,
+          label: asset.name,
+          meta: `${asset.width} × ${asset.height}`,
+        }]
+      : [],
+  ),
+  ...deliverables.value.map((result, index) => ({
+    id: `deliverable:${result.id}`,
+    src: result.url,
+    alt: `人工修图交付成片 ${index + 1}`,
+    label: `人工修图交付成片 ${index + 1}`,
+    meta: `${result.width} × ${result.height}`,
+  })),
+])
+
+function openPreview(id: string): void { selectedPreviewId.value = id }
+
+async function refreshPreview(id: string): Promise<void> {
+  const assetId = id.slice(id.indexOf(':') + 1)
+  try {
+    const signed = await assetApi.getUrl(assetId, 'preview')
+    previewUrlOverrides.value = {
+      ...previewUrlOverrides.value,
+      [id]: signed.url,
+    }
+  } catch {
+    // Keep the ticket readable when the signed address cannot be refreshed.
+  }
+}
+
+watch(
+  [() => props.ticket?.id, () => props.open],
+  ([ticketId, open], [previousTicketId]) => {
+    selectedPreviewId.value = ''
+    if (!open || ticketId !== previousTicketId) previewUrlOverrides.value = {}
+  },
+)
 </script>
 
 <template>
@@ -59,6 +135,12 @@ defineEmits<{
             <dd>{{ ticket.refundedCredits }} 次</dd>
           </div>
         </dl>
+        <div v-if="ticket.sla.stage !== 'completed'" class="sla-panel" :class="{ overdue: ticket.sla.overdue }">
+          <span>{{ ticket.sla.overdue ? '当前阶段已逾期' : '当前阶段 SLA' }}</span>
+          <strong v-if="ticket.sla.overdue">请优先处理</strong>
+          <strong v-else-if="ticket.sla.remainingSeconds !== null">剩余 {{ Math.ceil(ticket.sla.remainingSeconds / 3600) }} 小时</strong>
+          <small v-if="ticket.sla.dueAt">截止 {{ formatDateTime(ticket.sla.dueAt) }}</small>
+        </div>
       </section>
 
       <section class="detail-section">
@@ -79,46 +161,13 @@ defineEmits<{
         </div>
       </section>
 
-      <section class="detail-section">
-        <header>
-          <div>
-            <span>待处理素材</span>
-            <h3>用户选中的 AI 成片</h3>
-          </div>
-          <b>{{ ticket.selectedResults.length }} 张</b>
-        </header>
-        <div class="media-grid">
-          <figure v-for="result in ticket.selectedResults" :key="result.id">
-            <img :src="result.url" alt="用户选中的 AI 成片" />
-            <figcaption>{{ result.width }} × {{ result.height }}</figcaption>
-          </figure>
-        </div>
-        <div v-if="ticket.supplementalAssets.length" class="supplemental">
-          <strong>补充参考图</strong>
-          <div class="media-grid media-grid--small">
-            <figure v-for="asset in ticket.supplementalAssets" :key="asset.id">
-              <img :src="asset.previewUrl" :alt="asset.name" />
-              <figcaption>{{ asset.name }}</figcaption>
-            </figure>
-          </div>
-        </div>
-      </section>
-
-      <section v-if="ticket.deliverables.length" class="detail-section">
-        <header>
-          <div>
-            <span>人工交付</span>
-            <h3>已上传成片</h3>
-          </div>
-          <b>{{ ticket.deliverables.length }} 张</b>
-        </header>
-        <div class="media-grid">
-          <figure v-for="result in ticket.deliverables" :key="result.id">
-            <img :src="result.url" alt="人工修图交付成片" />
-            <figcaption>{{ result.width }} × {{ result.height }}</figcaption>
-          </figure>
-        </div>
-      </section>
+      <RetouchTicketMedia
+        :selected-results="selectedResults"
+        :supplemental-assets="supplementalAssets"
+        :deliverables="deliverables"
+        @preview="openPreview"
+        @image-error="refreshPreview"
+      />
 
       <section class="detail-section source-task">
         <header>
@@ -204,20 +253,21 @@ defineEmits<{
       </BaseButton>
     </template>
   </BaseDrawer>
+
+  <ImageLightbox
+    :open="Boolean(selectedPreviewId)"
+    :images="lightboxImages"
+    :selected-id="selectedPreviewId"
+    @close="selectedPreviewId = ''"
+    @select="selectedPreviewId = $event"
+    @image-error="refreshPreview"
+  />
 </template>
 
 <style scoped>
-.drawer-loading {
-  display: grid;
-  min-height: 320px;
-  place-items: center;
-  color: var(--ink-muted);
-}
+.drawer-loading { display: grid; min-height: 320px; place-items: center; color: var(--ink-muted); }
 
-.ticket-detail {
-  display: grid;
-  gap: 18px;
-}
+.ticket-detail { display: grid; gap: 18px; }
 
 .ticket-ledger,
 .detail-section {
@@ -231,6 +281,27 @@ defineEmits<{
   grid-template-columns: 210px minmax(0, 1fr);
   overflow: hidden;
 }
+
+.sla-panel {
+  display: grid;
+  gap: 3px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.sla-panel.overdue {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+  color: var(--danger);
+}
+
+.sla-panel span,
+.sla-panel small { font-size: 11px; }
+.sla-panel strong { font-size: 13px; }
 
 .ticket-ledger__status {
   display: grid;
@@ -334,44 +405,6 @@ dd {
 .revision p {
   margin-top: 3px;
   color: var(--ink-muted);
-  font-size: 12px;
-}
-
-.media-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px;
-}
-
-.media-grid figure {
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-soft);
-}
-
-.media-grid img {
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-}
-
-.media-grid figcaption {
-  overflow: hidden;
-  padding: 8px 10px;
-  color: var(--ink-muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.media-grid--small {
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  margin-top: 9px;
-}
-
-.supplemental {
-  margin-top: 16px;
   font-size: 12px;
 }
 

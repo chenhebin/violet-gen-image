@@ -48,6 +48,7 @@ type RetouchQuery struct {
 	Status   string
 	UserID   string
 	Pending  bool
+	SLA      string
 }
 
 type AuditQuery struct {
@@ -190,6 +191,24 @@ func (s *Service) GetTask(ctx context.Context, taskID string) (*ManagedTaskDTO, 
 		value.TaskID = task.ID
 		results = append(results, *value)
 	}
+	var jobs []model.GenerationJob
+	if err := s.db.WithContext(ctx).Where("task_id = ?", task.ID).Order("created_at ASC").Find(&jobs).Error; err != nil {
+		return nil, err
+	}
+	jobIDs := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		jobIDs = append(jobIDs, job.ID)
+	}
+	attempts := make([]model.ProviderAttempt, 0)
+	if len(jobIDs) > 0 {
+		if err := s.db.WithContext(ctx).Where("job_id IN ?", jobIDs).Order("started_at ASC").Find(&attempts).Error; err != nil {
+			return nil, err
+		}
+	}
+	providerAttempts := make([]ProviderAttemptDTO, 0, len(attempts))
+	for _, attempt := range attempts {
+		providerAttempts = append(providerAttempts, providerAttemptDTO(attempt))
+	}
 	value := &ManagedTaskDTO{
 		ManagedTaskSummaryDTO: summary,
 		SourceRequirement:     confirmed.Source,
@@ -198,6 +217,7 @@ func (s *Service) GetTask(ctx context.Context, taskID string) (*ManagedTaskDTO, 
 		Settings:              settings,
 		Assets:                assets,
 		Results:               results,
+		ProviderAttempts:      providerAttempts,
 		ExecutionSnapshot: map[string]any{
 			"providerId": task.ProviderID, "providerName": task.ProviderNameSnapshot,
 			"modelId": task.ModelNameSnapshot, "modelName": task.ModelDisplayNameSnapshot,
@@ -222,6 +242,31 @@ func (s *Service) GetTask(ctx context.Context, taskID string) (*ManagedTaskDTO, 
 		}
 	}
 	return value, nil
+}
+
+func providerAttemptDTO(value model.ProviderAttempt) ProviderAttemptDTO {
+	return ProviderAttemptDTO{
+		ID: value.ID, JobID: value.JobID, AttemptNo: value.AttemptNo,
+		Operation: value.Operation, Method: value.HTTPMethod, Path: value.EndpointPath,
+		Model: value.ModelName, Status: value.Status,
+		ExternalRequestID: value.ExternalRequestID, ResponseStatus: value.ResponseStatus,
+		LatencyMillis: value.LatencyMillis, ErrorCode: value.ErrorCode,
+		ErrorKind: value.ErrorKind, ErrorSummary: value.ErrorSummary,
+		RequestSummary:   decodeJSONMap(value.RequestSummary),
+		ResponseMetadata: decodeJSONMap(value.ResponseMetadata),
+		StartedAt:        value.StartedAt, CompletedAt: value.CompletedAt,
+	}
+}
+
+func decodeJSONMap(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil
+	}
+	return value
 }
 
 func (s *Service) ListAssets(ctx context.Context, input AssetQuery) (PageResult[ManagedAssetDTO], error) {
@@ -301,6 +346,16 @@ func (s *Service) ListRetouch(ctx context.Context, input RetouchQuery) (PageResu
 			retouch.StatusCancelled,
 		})
 	}
+	if input.SLA == "overdue" || input.SLA == "due-soon" {
+		now := time.Now().UTC()
+		dueExpr := "CASE WHEN retouch_tickets.status IN ('submitted','quote_pending') THEN retouch_tickets.quote_due_at WHEN retouch_tickets.revision_used = true AND retouch_tickets.revision_due_at IS NOT NULL THEN retouch_tickets.revision_due_at ELSE retouch_tickets.first_delivery_due_at END"
+		query = query.Where("("+dueExpr+") IS NOT NULL")
+		if input.SLA == "overdue" {
+			query = query.Where("("+dueExpr+") <= ?", now)
+		} else {
+			query = query.Where("("+dueExpr+") > ? AND ("+dueExpr+") <= ?", now, now.Add(24*time.Hour))
+		}
+	}
 	if input.UserID != "" {
 		query = query.Where("retouch_tickets.user_id = ?", input.UserID)
 	}
@@ -342,6 +397,7 @@ func (s *Service) ListRetouch(ctx context.Context, input RetouchQuery) (PageResu
 			credits := detail.Quote.Credits
 			summary.QuoteCredits = &credits
 		}
+		summary.SLA = detail.SLA
 		items = append(items, retouch.ManageSummaryDTO{SummaryDTO: summary, User: detail.User})
 	}
 	return PageResult[retouch.ManageSummaryDTO]{
@@ -467,7 +523,8 @@ func (s *Service) managedAssetDTO(ctx context.Context, value model.Asset) (Manag
 		ID: value.ID, OwnerID: ownerID, OwnerEmail: ownerEmail, Name: value.OriginalName,
 		Kind: value.Kind, Role: value.ReferenceRole, MIMEType: value.MIMEType,
 		Size: value.SizeBytes, Width: value.Width, Height: value.Height,
-		PreviewURL: dto.PreviewURL, TaskID: taskID, TicketID: ticketID,
+		PreviewURL: dto.PreviewURL, PreviewURLExpiresAt: dto.PreviewURLExpiresAt,
+		TaskID: taskID, TicketID: ticketID,
 		Retained: value.RetainPermanently, RetentionExpiresAt: &retention,
 		DeletedAt: value.CleanedAt, CreatedAt: value.CreatedAt,
 	}, nil

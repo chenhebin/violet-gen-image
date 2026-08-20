@@ -1,10 +1,10 @@
 # 映研平台管理端 API 接口契约
 
-> 文档版本：v0.3
+> 文档版本：v0.4
 > 面向项目：`front/server` 映研平台管理端  
 > 后端关系：与 `front/client` 共用同一个后端、用户、次数账户和工单数据  
 > 管理接口基础路径：`/api/manage`  
-> 更新时间：2026-08-12
+> 更新时间：2026-08-13
 
 本文档是平台管理端与 Go 后端联调的依据。用户端接口由
 [`clientApi.md`](./clientApi.md) 维护；两个前端必须连接同一个 PostgreSQL
@@ -136,6 +136,10 @@ CSRF Token 和 `Origin`；Token 错误返回 HTTP `403`。
 对于 `multipart/form-data` 交付接口，后端应在首次处理时记录幂等键和文件摘要；
 同一幂等键重试时返回首次交付结果。
 
+管理写接口按管理员身份执行进程内频率限制。超过限制返回 HTTP `429`、错误码
+`4001`，并通过 `Retry-After` 响应头返回建议等待秒数；前端应在等待期间禁用同一操作，
+不得用重试循环绕过限制。
+
 ### 1.5 分页结构
 
 ```ts
@@ -240,6 +244,7 @@ interface RetouchTicketSummary {
   status: RetouchTicketStatus
   updatedAt: string
   quoteCredits?: number
+  sla: RetouchSLA
 }
 
 interface RetouchTicketTimelineEntry {
@@ -252,6 +257,16 @@ interface RetouchQuote {
   id: string
   credits: number
   createdAt: string
+  status: 'active' | 'accepted' | 'invalidated' | 'expired'
+  expiresAt: string
+  remainingSeconds: number
+}
+
+interface RetouchSLA {
+  stage: 'quote' | 'first-delivery' | 'revision' | 'completed'
+  dueAt: string | null
+  overdue: boolean
+  remainingSeconds: number | null
 }
 
 interface RetouchRevision {
@@ -319,6 +334,7 @@ Query 参数：
 | --- | --- | --- | --- |
 | `status` | `RetouchTicketStatus` | 否 | 按单一状态筛选 |
 | `keyword` | string | 否 | 匹配工单号、任务标题或用户邮箱，最长 100 字符 |
+| `sla` | `overdue \| due-soon` | 否 | 按 SLA 筛选；`due-soon` 表示 24 小时内到期 |
 | `page` | integer | 否 | 默认 `1` |
 | `pageSize` | integer | 否 | 默认 `20`，最大 `100` |
 
@@ -411,6 +427,10 @@ interface QuoteRetouchTicketPayload {
 - `quote_pending`：用户接受前可以覆盖旧报价。
 
 `accepted` 及之后不能修改报价。
+
+报价有效期固定为 48 小时。报价过期后状态为 `expired`，工单回到
+`quote_pending`；接受过期报价返回 HTTP `409`、错误码 `7005`，不会预占次数。
+重新报价会生成新的 Quote ID 并立即使旧报价失效。
 
 ### 5.2 开始处理
 
@@ -655,6 +675,9 @@ interface DashboardData {
 }
 ```
 
+Dashboard metrics additionally include `overdueTickets`（已超过当前 SLA 截止时间的工单数）
+和 `dueSoonTickets`（距离当前 SLA 截止时间不超过 24 小时的工单数）。
+
 ### 10.2 兑换码和批次
 
 | 方法与路径 | 参数 | 成功 data | 用途 |
@@ -667,7 +690,8 @@ interface DashboardData {
 | `PATCH /api/manage/redemption-batches/:batchId` | `UpdateRedemptionBatchPayload` | `RedemptionBatch` | 修改批次展示名称 |
 | `POST /api/manage/redemption-codes/:codeId/reveal` | 无 | `{ id, fullCode }` | 单次查看未使用完整码 |
 | `POST /api/manage/redemption-batches/:batchId/reveal` | 无 | `{ id, fullCode }[]` | 查看批次内可展示完整码 |
-| `POST /api/manage/redemption-batches/:batchId/export` | 无 | `{ filename, csv }` | 导出批次 CSV |
+| `POST /api/manage/redemption-batches/:batchId/export?format=csv` | Query `format=csv` | `RedemptionBatchExport` | 导出未使用码 CSV |
+| `POST /api/manage/redemption-batches/:batchId/export?format=xianyu` | Query `format=xianyu` | `RedemptionBatchExport` | 导出每码一行的闲鱼自动发货库存 |
 | `POST /api/manage/redemption-codes/disable` | `DisableRedemptionPayload` | `BulkMutationResult` | 失效未使用兑换码 |
 | `POST /api/manage/redemption-codes/extend` | `ExtendRedemptionPayload` | `BulkMutationResult` | 延长未使用或自然过期兑换码 |
 
@@ -706,11 +730,28 @@ interface BulkMutationResult {
   skipped: number
   failed: number
 }
+
+interface RedemptionBatchExport {
+  filename: string
+  content: string
+  csv?: string
+  mediaType: 'text/csv;charset=utf-8' | 'text/plain;charset=utf-8'
+  format: 'csv' | 'xianyu'
+  count: number
+}
 ```
 
 `CreateRedemptionBatchResult` 返回 `batch` 和仅本次响应可见的
 `codes: { id, fullCode, maskedCode }[]`。Reveal、Export 和生成响应必须设置
 `Cache-Control: no-store` 并写敏感读取审计。
+
+闲鱼库存导出只包含导出时仍为 `unused` 的兑换码，每行对应一个码，不含真实换行。固定格式为“浏览器打开领取并开始创作吧～：领取链接 ｜ 兑换码：完整兑换码”，不再写入领取次数或“备用兑换码”字样：
+
+```text
+浏览器打开领取并开始创作吧～：https://img.daidaiweb.cn/claim?code=YY-AKK9-XD9M-9DSM ｜ 兑换码：YY-AKK9-XD9M-9DSM
+```
+
+领取网址来自后端 `PUBLIC_WEB_URL`；Query 必须使用标准 URL 编码。导出审计只记录批次、格式与数量，不记录完整码正文。`csv` 是旧管理端兼容字段，新增页面应优先读取 `content`。
 
 批次名称修改约定：
 
@@ -816,10 +857,23 @@ interface AIModel {
     testedAt: string
     success: boolean
     message: string
+    requestSummary?: ProviderRequestSummary | null
   }
   createdAt: string
   updatedAt: string
   isPlatformModel: boolean
+}
+
+interface ProviderRequestSummary {
+  operation: string
+  method: string
+  path: string
+  model?: string
+  parameterSummary?: Record<string, unknown>
+  status?: number
+  latencyMs: number
+  requestId?: string
+  errorKind?: string
 }
 
 interface PlatformModelBindings {
@@ -889,8 +943,12 @@ interface ResetPasswordResult {
 `queued | processing | completed | partial | failed | cancelled`。
 `ManagedGenerationTask` 额外返回 `sourceRequirement`、`optimizedPrompt`、
 `confirmedPrompt`、`settings`、`assets`、`results`、`executionSnapshot`、
-可选 `errorMessage` 和关联工单。管理端不得使用 Client 的
+`providerAttempts`、可选 `errorMessage` 和关联工单。管理端不得使用 Client 的
 `failed-refunded` 展示别名。
+
+`providerAttempts` 仅包含脱敏执行摘要：操作类型、HTTP 方法、接口路径、模型名称、
+响应状态、耗时、Provider Request ID、错误分类、参数结构摘要和响应元数据；不会返回
+API Key、Authorization、完整提示词、图片内容或签名 URL。
 
 ### 10.6 资产
 
@@ -898,11 +956,12 @@ interface ResetPasswordResult {
 | --- | --- | --- | --- |
 | `GET /api/manage/assets` | `page,pageSize,keyword,kind,userId,taskId,ticketId,retained` | `PageResult<ManagedAsset>` | 查询图片元数据 |
 | `GET /api/manage/assets/:assetId` | 路径 ID | `ManagedAsset` | 查看资产详情 |
+| `GET /api/manage/assets/:assetId/url?purpose=preview\|download` | `purpose` 默认 `preview` | `{ url, expiresAt }` | 刷新短期签名地址 |
 | `POST /api/manage/assets/:assetId/signed-url` | 无 | `{ url, expiresAt }` | 获取短期预览或下载地址 |
 | `POST /api/manage/assets/:assetId/retain` | `{ retained, reason }` | `ManagedAsset` | 长期保留或解除保留 |
 | `POST /api/manage/assets/:assetId/cleanup` | `{ reason }` | `ManagedAsset` | 提前清理可删除对象 |
 
-`ManagedAsset` 只返回对象元数据和可选短期 `previewUrl`，绝不返回 MinIO
+`ManagedAsset` 只返回对象元数据和可选短期 `previewUrl`、`previewUrlExpiresAt`，绝不返回 MinIO
 Object Key、访问密钥或永久公开地址。进行中任务、进行中工单或长期保留资产
 不能清理。
 

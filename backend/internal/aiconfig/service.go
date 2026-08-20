@@ -193,12 +193,14 @@ func (s *Service) UpdateProvider(
 			updates["connection_status"] = StatusUntested
 			updates["last_tested_at"] = nil
 			updates["last_test_summary"] = ""
+			updates["last_test_details"] = nil
 			updates["config_version"] = gorm.Expr("config_version + 1")
 			if err := tx.Model(&model.AIModel{}).Where("provider_id = ?", providerID).
 				Updates(map[string]any{
 					"test_status":       StatusUntested,
 					"last_tested_at":    nil,
 					"last_test_summary": "",
+					"last_test_details": nil,
 					"config_version":    gorm.Expr("config_version + 1"),
 				}).Error; err != nil {
 				return err
@@ -280,6 +282,7 @@ func (s *Service) RotateKey(ctx context.Context, providerID string, rawKey strin
 				"connection_status":  StatusUntested,
 				"last_tested_at":     nil,
 				"last_test_summary":  "",
+				"last_test_details":  nil,
 				"config_version":     gorm.Expr("config_version + 1"),
 				"version":            gorm.Expr("version + 1"),
 			})
@@ -294,6 +297,7 @@ func (s *Service) RotateKey(ctx context.Context, providerID string, rawKey strin
 				"test_status":       StatusUntested,
 				"last_tested_at":    nil,
 				"last_test_summary": "",
+				"last_test_details": nil,
 				"config_version":    gorm.Expr("config_version + 1"),
 			}).Error
 	})
@@ -311,8 +315,16 @@ func (s *Service) TestProvider(ctx context.Context, providerID string, adminID s
 		return nil, notFoundProvider(err)
 	}
 	adapter, err := s.factory.FromProvider(value)
+	var details any
 	if err == nil {
-		_, err = adapter.TestConnection(ctx)
+		result, testErr := adapter.TestConnection(ctx)
+		err = testErr
+		details = result.RequestSummary
+		if err != nil {
+			details = providerErrorDetails(err)
+		}
+	} else {
+		details = providerErrorDetails(err)
 	}
 	status := StatusHealthy
 	summary := "连接正常"
@@ -325,13 +337,15 @@ func (s *Service) TestProvider(ctx context.Context, providerID string, adminID s
 		"connection_status": status,
 		"last_tested_at":    &now,
 		"last_test_summary": summary,
+		"last_test_details": marshalTestDetails(details),
 	}).Error; updateErr != nil {
 		return nil, updateErr
 	}
-	_ = s.recordTest(ctx, value.ID, nil, "provider", status, summary, value.ConfigVersion, adminID)
+	_ = s.recordTest(ctx, value.ID, nil, "provider", status, summary, value.ConfigVersion, adminID, details)
 	value.ConnectionStatus = status
 	value.LastTestedAt = &now
 	value.LastTestSummary = summary
+	value.LastTestDetails = marshalTestDetails(details)
 	return &value, nil
 }
 
@@ -413,6 +427,7 @@ func (s *Service) UpdateModel(ctx context.Context, modelID string, input UpdateM
 			plan.updates["test_status"] = StatusUntested
 			plan.updates["last_tested_at"] = nil
 			plan.updates["last_test_summary"] = ""
+			plan.updates["last_test_details"] = nil
 			plan.updates["config_version"] = gorm.Expr("config_version + 1")
 		}
 		if err := tx.Model(&output).Updates(plan.updates).Error; err != nil {
@@ -518,8 +533,20 @@ func (s *Service) TestModel(ctx context.Context, modelID string, adminID string)
 		return nil, err
 	}
 	adapter, err := s.factory.FromProvider(providerModel)
+	var details any
 	if err == nil {
-		err = testModelCapabilities(ctx, adapter, value)
+		var calls []provider.CallMetadata
+		calls, err = testModelCapabilitiesWithDetails(ctx, adapter, value)
+		if len(calls) == 1 {
+			details = calls[0]
+		} else if len(calls) > 1 {
+			details = map[string]any{"calls": calls}
+		}
+		if err != nil {
+			details = providerErrorDetails(err)
+		}
+	} else {
+		details = providerErrorDetails(err)
 	}
 	status := StatusHealthy
 	summary := "模型能力测试正常"
@@ -532,13 +559,15 @@ func (s *Service) TestModel(ctx context.Context, modelID string, adminID string)
 		"test_status":       status,
 		"last_tested_at":    &now,
 		"last_test_summary": summary,
+		"last_test_details": marshalTestDetails(details),
 	}).Error; updateErr != nil {
 		return nil, updateErr
 	}
-	_ = s.recordTest(ctx, providerModel.ID, &value.ID, "model", status, summary, value.ConfigVersion, adminID)
+	_ = s.recordTest(ctx, providerModel.ID, &value.ID, "model", status, summary, value.ConfigVersion, adminID, details)
 	value.TestStatus = status
 	value.LastTestedAt = &now
 	value.LastTestSummary = summary
+	value.LastTestDetails = marshalTestDetails(details)
 	return &value, nil
 }
 
@@ -666,63 +695,76 @@ func validatePlatformCapabilities(modelType string, capabilities Capabilities) e
 }
 
 func testModelCapabilities(ctx context.Context, adapter provider.Adapter, value model.AIModel) error {
+	_, err := testModelCapabilitiesWithDetails(ctx, adapter, value)
+	return err
+}
+
+func testModelCapabilitiesWithDetails(ctx context.Context, adapter provider.Adapter, value model.AIModel) ([]provider.CallMetadata, error) {
+	details := make([]provider.CallMetadata, 0, 2)
 	switch value.Type {
 	case "chat":
 		var capabilities Capabilities
 		if err := json.Unmarshal(value.Capabilities, &capabilities); err != nil {
-			return err
+			return details, err
 		}
 		request := provider.OptimizePromptRequest{
-			Model:     value.ModelID,
-			Prompt:    "Reply with OK.",
-			MaxTokens: 8,
+			Model:  value.ModelID,
+			Prompt: "Reply with OK.",
 		}
 		if capabilities.VisionInput {
 			sample, err := samplePNG()
 			if err != nil {
-				return err
+				return details, err
 			}
 			request.Prompt = "Look at the image and reply with OK."
 			request.ImageDataURLs = []string{
 				"data:image/png;base64," + base64.StdEncoding.EncodeToString(sample),
 			}
 		}
-		_, err := adapter.OptimizePrompt(ctx, request)
-		return err
+		result, err := adapter.OptimizePrompt(ctx, request)
+		if err != nil {
+			return details, err
+		}
+		details = append(details, result.RequestSummary)
+		return details, nil
 	case "image":
 		var capabilities Capabilities
 		if err := json.Unmarshal(value.Capabilities, &capabilities); err != nil {
-			return err
+			return details, err
 		}
 		if capabilities.TextToImage {
-			if _, err := adapter.TestModel(ctx, provider.ModelTestRequest{
+			result, err := adapter.TestModel(ctx, provider.ModelTestRequest{
 				Model:  value.ModelID,
 				Type:   provider.ModelTypeImage,
 				Prompt: "A plain white studio card.",
-			}); err != nil {
-				return err
+			})
+			if err != nil {
+				return details, err
 			}
+			details = append(details, result.RequestSummary)
 		}
 		if capabilities.ImageToImage {
 			sample, err := samplePNG()
 			if err != nil {
-				return err
+				return details, err
 			}
 			imageInput := provider.ImageInput{
 				Filename: "capability-test.png", ContentType: "image/png", Reader: bytes.NewReader(sample),
 			}
-			if _, err := adapter.TestModel(ctx, provider.ModelTestRequest{
+			result, err := adapter.TestModel(ctx, provider.ModelTestRequest{
 				Model:  value.ModelID,
 				Type:   provider.ModelTypeImage,
 				Prompt: "Keep this image unchanged.",
 				Image:  &imageInput,
-			}); err != nil {
-				return err
+			})
+			if err != nil {
+				return details, err
 			}
+			details = append(details, result.RequestSummary)
 		}
-		return nil
+		return details, nil
 	default:
-		return errors.New("unsupported model type")
+		return details, errors.New("unsupported model type")
 	}
 }
 
@@ -747,6 +789,7 @@ func (s *Service) recordTest(
 	summary string,
 	version int64,
 	adminID string,
+	details any,
 ) error {
 	now := time.Now().UTC()
 	run := model.ModelTestRun{
@@ -755,11 +798,36 @@ func (s *Service) recordTest(
 		Kind:          kind,
 		Status:        status,
 		Summary:       summary,
+		Details:       marshalTestDetails(details),
 		ConfigVersion: version,
 		RequestedBy:   adminID,
 		CompletedAt:   &now,
 	}
 	return s.db.WithContext(ctx).Create(&run).Error
+}
+
+func marshalTestDetails(value any) []byte {
+	if value == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return encoded
+}
+
+func providerErrorDetails(err error) any {
+	var providerErr *provider.Error
+	if !errors.As(err, &providerErr) {
+		return map[string]any{"errorKind": "internal"}
+	}
+	metadata := providerErr.Metadata
+	metadata.ErrorKind = string(providerErr.Kind)
+	if metadata.Status == 0 {
+		metadata.Status = providerErr.StatusCode
+	}
+	return metadata
 }
 
 func validateBaseURL(rawURL string, allowHTTP bool) error {

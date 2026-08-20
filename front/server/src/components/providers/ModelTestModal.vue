@@ -79,6 +79,18 @@ async function copyRequest(
       <span>{{ error || result?.message }}</span>
     </div>
 
+    <div v-if="result?.requestSummary" class="request-summary" aria-live="polite">
+      <span>实际请求摘要</span>
+      <code>
+        {{ result.requestSummary.method }} {{ result.requestSummary.path }}
+        · HTTP {{ result.requestSummary.status || '—' }}
+        · {{ result.requestSummary.latencyMs }} ms
+        <template v-if="result.requestSummary.requestId">
+          · {{ result.requestSummary.requestId }}
+        </template>
+      </code>
+    </div>
+
     <div class="request-list">
       <section
         v-for="request in requests"
@@ -176,6 +188,25 @@ async function copyRequest(
   border-color: rgb(184 87 75 / 24%);
   background: #fbefed;
   color: var(--danger);
+}
+
+.request-summary {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.request-summary code {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .request-list {

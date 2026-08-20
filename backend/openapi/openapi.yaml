@@ -125,6 +125,37 @@ paths:
                 $ref: "#/components/schemas/LedgerListSuccess"
         "401":
           $ref: "#/components/responses/Error"
+  /api/notices/ai-processing:
+    get:
+      tags: [User]
+      operationId: getAIProcessingNotice
+      security:
+        - userSession: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AIProcessingNotice"
+  /api/notices/ai-processing/ack:
+    post:
+      tags: [User]
+      operationId: acknowledgeAIProcessingNotice
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/AIProcessingNotice"
+        "409":
+          $ref: "#/components/responses/Error"
   /api/usage/quote:
     post:
       tags: [User]
@@ -141,6 +172,28 @@ paths:
               schema:
                 $ref: "#/components/schemas/GenerationQuoteSuccess"
         "400":
+          $ref: "#/components/responses/Error"
+  /api/redemptions/preview:
+    post:
+      tags: [User]
+      operationId: previewRedemptionCode
+      description: 公开只读预检，不消耗兑换码；正式领取时仍会重新校验全部条件。
+      requestBody:
+        $ref: "#/components/requestBodies/RedemptionClaim"
+      responses:
+        "200":
+          description: 可领取信息
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedemptionPreviewSuccess"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "410":
+          $ref: "#/components/responses/Error"
+        "429":
           $ref: "#/components/responses/Error"
   /api/redemptions/claim:
     post:
@@ -185,6 +238,8 @@ paths:
                   $ref: "#/components/schemas/UserAssetKind"
                 role:
                   $ref: "#/components/schemas/ReferenceRole"
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "201":
           description: 上传后的素材
@@ -202,12 +257,32 @@ paths:
         - userSession: []
       parameters:
         - $ref: "#/components/parameters/AssetId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           $ref: "#/components/responses/Empty"
         "404":
           $ref: "#/components/responses/Error"
         "409":
+          $ref: "#/components/responses/Error"
+  /api/assets/{assetId}/url:
+    get:
+      tags: [User]
+      operationId: getUserAssetUrl
+      security:
+        - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+        - name: purpose
+          in: query
+          schema:
+            type: string
+            enum: [preview, download]
+            default: preview
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageSignedAsset"
+        "404":
           $ref: "#/components/responses/Error"
 
   /api/prompts/optimize:
@@ -226,6 +301,23 @@ paths:
         "502":
           $ref: "#/components/responses/Error"
         "503":
+          $ref: "#/components/responses/Error"
+  /api/prompts/reference-prompt:
+    post:
+      tags: [Generation]
+      operationId: describeReferencePrompt
+      security:
+        - userSession: []
+      requestBody:
+        $ref: "#/components/requestBodies/ReferencePrompt"
+      responses:
+        "200":
+          $ref: "#/components/responses/ReferencePrompt"
+        "400":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "502":
           $ref: "#/components/responses/Error"
   /api/prompts/confirm:
     post:
@@ -255,7 +347,7 @@ paths:
         $ref: "#/components/requestBodies/GenerationCreate"
       responses:
         "202":
-          $ref: "#/components/responses/GenerationTask"
+          $ref: "#/components/responses/GenerationCreate"
         "400":
           $ref: "#/components/responses/Error"
         "409":
@@ -266,6 +358,9 @@ paths:
       operationId: listGenerationTasks
       security:
         - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: 当前用户任务
@@ -296,6 +391,7 @@ paths:
         - userSession: []
       parameters:
         - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           $ref: "#/components/responses/GenerationTask"
@@ -308,6 +404,9 @@ paths:
       operationId: listUserRetouchTickets
       security:
         - userSession: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: 当前用户人工工单
@@ -578,6 +677,13 @@ paths:
       parameters:
         - $ref: "#/components/parameters/BatchId"
         - $ref: "#/components/parameters/IdempotencyKey"
+        - name: format
+          in: query
+          description: csv 为运营表格，xianyu 为每码一行的闲鱼自动发货库存。
+          schema:
+            type: string
+            enum: [csv, xianyu]
+            default: csv
       responses:
         "200":
           $ref: "#/components/responses/ManageRedemptionBatchExport"
@@ -1050,6 +1156,24 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/ManageSignedAsset"
+  /api/manage/assets/{assetId}/url:
+    get:
+      tags: [Manage Content]
+      operationId: getManagedAssetUrl
+      x-permission: platform:manage
+      security:
+        - adminSession: []
+      parameters:
+        - $ref: "#/components/parameters/AssetId"
+        - name: purpose
+          in: query
+          schema:
+            type: string
+            enum: [preview, download]
+            default: preview
+      responses:
+        "200":
+          $ref: "#/components/responses/ManageSignedAsset"
   /api/manage/assets/{assetId}/retain:
     post:
       tags: [Manage Content]
@@ -1100,6 +1224,11 @@ paths:
           in: query
           schema:
             $ref: "#/components/schemas/RetouchStatus"
+        - name: sla
+          in: query
+          schema:
+            type: string
+            enum: [overdue, due-soon]
       responses:
         "200":
           $ref: "#/components/responses/ManageRetouchPage"
@@ -1329,6 +1458,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/PromptOptimizeInput"
+    ReferencePrompt:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ReferencePromptInput"
     PromptConfirm:
       required: true
       content:
@@ -1577,7 +1712,7 @@ components:
           schema:
             $ref: "#/components/schemas/ManageGeneratedCodeListSuccess"
     ManageRedemptionBatchExport:
-      description: 兑换码批次 CSV 内容
+      description: 兑换码批次 CSV 或闲鱼库存内容
       content:
         application/json:
           schema:
@@ -1720,6 +1855,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/EntitlementSuccess"
+    AIProcessingNotice:
+      description: 第三方 AI 处理告知及当前用户确认状态
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AIProcessingNoticeSuccess"
     PromptVersion:
       description: 提示词版本
       content:
@@ -1732,6 +1873,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/GenerationTaskSuccess"
+    GenerationCreate:
+      description: 创建生图任务并返回服务端最新权益
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GenerationCreateSuccess"
     RetouchTicket:
       description: 人工修图工单
       content:
@@ -1786,6 +1933,14 @@ components:
         pageSize: { type: integer, minimum: 1, maximum: 100 }
         total: { type: integer, minimum: 0 }
         hasMore: { type: boolean }
+    UserPageMetadata:
+      type: object
+      required: [page, pageSize, total, hasMore]
+      properties:
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+        hasMore: { type: boolean }
     ManageDashboardMetric:
       type: object
       additionalProperties: false
@@ -1800,6 +1955,8 @@ components:
             - creditsGrantedToday
             - failedTasks
             - pendingTickets
+            - overdueTickets
+            - dueSoonTickets
         label: { type: string }
         value: { type: integer, minimum: 0 }
         tone: { type: string, enum: [neutral, positive, warning, danger] }
@@ -1966,10 +2123,19 @@ components:
     ManageRedemptionBatchExportData:
       type: object
       additionalProperties: false
-      required: [filename, csv]
+      required: [filename, content, mediaType, format, count]
       properties:
         filename: { type: string }
-        csv: { type: string }
+        content:
+          type: string
+          description: >-
+            下载正文。闲鱼格式中一行对应一个兑换码，固定为“浏览器打开领取并开始创作吧～：领取链接 ｜ 兑换码：完整兑换码”。
+        csv:
+          type: string
+          description: 兼容旧管理端的 CSV 内容，仅 format=csv 时返回。
+        mediaType: { type: string }
+        format: { type: string, enum: [csv, xianyu] }
+        count: { type: integer, minimum: 0 }
     ManageRedemptionCodeRevealData:
       type: object
       additionalProperties: false
@@ -1998,6 +2164,24 @@ components:
         testedAt: { type: string, format: date-time }
         success: { type: boolean }
         message: { type: string }
+        requestSummary:
+          oneOf:
+            - $ref: "#/components/schemas/ProviderRequestSummary"
+            - type: "null"
+    ProviderRequestSummary:
+      type: object
+      additionalProperties: false
+      required: [operation, method, path, latencyMs]
+      properties:
+        operation: { type: string }
+        method: { type: string }
+        path: { type: string }
+        model: { type: string }
+        parameterSummary: { type: object, additionalProperties: true }
+        status: { type: integer }
+        latencyMs: { type: integer, minimum: 0 }
+        requestId: { type: string }
+        errorKind: { type: string }
     ManageAIProviderData:
       type: object
       additionalProperties: false
@@ -2069,6 +2253,10 @@ components:
         capabilities:
           $ref: "#/components/schemas/ManageAIModelCapabilities"
         lastTestAt: { type: [string, "null"], format: date-time }
+        lastTest:
+          oneOf:
+            - $ref: "#/components/schemas/ManageAIProviderLastTest"
+            - type: "null"
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
         isPlatformModel: { type: boolean }
@@ -2161,6 +2349,7 @@ components:
         width: { type: integer, minimum: 0 }
         height: { type: integer, minimum: 0 }
         previewUrl: { type: string, format: uri }
+        previewUrlExpiresAt: { type: string, format: date-time }
         taskId: { type: string, format: uuid }
         ticketId: { type: string, format: uuid }
         retained: { type: boolean }
@@ -2218,6 +2407,29 @@ components:
         modelId: { type: string }
         modelName: { type: string }
         configVersion: { type: integer, minimum: 0 }
+    ProviderAttempt:
+      type: object
+      additionalProperties: false
+      required: [id, jobId, attemptNo, operation, method, path, model, status, latencyMs, startedAt]
+      properties:
+        id: { type: string, format: uuid }
+        jobId: { type: string, format: uuid }
+        attemptNo: { type: integer, minimum: 1 }
+        operation: { type: string }
+        method: { type: string }
+        path: { type: string }
+        model: { type: string }
+        status: { type: string }
+        externalRequestId: { type: string }
+        responseStatus: { type: integer }
+        latencyMs: { type: integer, minimum: 0 }
+        errorCode: { type: string }
+        errorKind: { type: string }
+        errorSummary: { type: string }
+        requestSummary: { type: object, additionalProperties: true }
+        responseMetadata: { type: object, additionalProperties: true }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: [string, "null"], format: date-time }
     ManagedGenerationTask:
       allOf:
         - $ref: "#/components/schemas/ManagedGenerationTaskSummary"
@@ -2248,6 +2460,10 @@ components:
                 $ref: "#/components/schemas/ManagedAsset"
             executionSnapshot:
               $ref: "#/components/schemas/ManageExecutionSnapshot"
+            providerAttempts:
+              type: array
+              items:
+                $ref: "#/components/schemas/ProviderAttempt"
             errorMessage: { type: string }
             retouchTicket:
               $ref: "#/components/schemas/RetouchSummary"
@@ -2378,6 +2594,26 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/ManagedGenerationTaskSummary"
+    GenerationTaskPage:
+      allOf:
+        - $ref: "#/components/schemas/UserPageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/GenerationTask"
+    RetouchTicketPage:
+      allOf:
+        - $ref: "#/components/schemas/UserPageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/RetouchTicket"
     ManageAssetPage:
       allOf:
         - $ref: "#/components/schemas/ManagePageMetadata"
@@ -2688,7 +2924,32 @@ components:
       properties:
         code: { type: integer, const: 0 }
         data:
-          $ref: "#/components/schemas/Entitlement"
+            $ref: "#/components/schemas/Entitlement"
+    AIProcessingNotice:
+      type: object
+      additionalProperties: false
+      required: [version, title, providerDisclosure, securitySummary, purpose, processingScope, retentionDays, stopUseDescription, acknowledged]
+      properties:
+        version: { type: string }
+        title: { type: string }
+        providerDisclosure: { type: string }
+        securitySummary: { type: string }
+        purpose: { type: string }
+        processingScope:
+          type: array
+          items: { type: string }
+        retentionDays: { type: integer, minimum: 1 }
+        stopUseDescription: { type: string }
+        acknowledged: { type: boolean }
+        acknowledgedAt: { type: string, format: date-time }
+    AIProcessingNoticeSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          $ref: "#/components/schemas/AIProcessingNotice"
     LedgerEntry:
       type: object
       required: [id, type, amount, balanceAfter, createdAt]
@@ -2738,6 +2999,25 @@ components:
             added: { type: integer, minimum: 1 }
             entitlement:
               $ref: "#/components/schemas/Entitlement"
+    RedemptionPreviewSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          type: object
+          additionalProperties: false
+          required: [valid, credits, productName, maskedCode, expiresAt]
+          properties:
+            valid: { type: boolean, const: true }
+            credits: { type: integer, minimum: 1 }
+            productName: { type: string }
+            maskedCode: { type: string }
+            expiresAt:
+              oneOf:
+                - { type: string, format: date-time }
+                - { type: "null" }
     UserAssetKind:
       type: string
       enum: [source, reference, retouch-reference]
@@ -2759,6 +3039,7 @@ components:
         width: { type: integer, minimum: 1 }
         height: { type: integer, minimum: 1 }
         previewUrl: { type: string, format: uri }
+        previewUrlExpiresAt: { type: string, format: date-time }
         uploadProgress: { type: integer, minimum: 0, maximum: 100 }
         ownerId: { type: string, format: uuid }
         createdAt: { type: string, format: date-time }
@@ -2785,6 +3066,7 @@ components:
         details: { type: string }
         negative: { type: string }
         output: { type: string }
+        referencePrompt: { type: string, maxLength: 4000 }
     PromptReferenceAsset:
       type: object
       additionalProperties: false
@@ -2809,6 +3091,28 @@ components:
         referenceAssets:
           type: array
           maxItems: 8
+          items:
+            $ref: "#/components/schemas/PromptReferenceAsset"
+        referencePrompt: { type: string, maxLength: 4000 }
+    ReferencePromptInput:
+      type: object
+      additionalProperties: false
+      required: [referenceAssets]
+      properties:
+        referenceAssets:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/PromptReferenceAsset"
+    ReferencePromptResult:
+      type: object
+      additionalProperties: false
+      required: [prompt, referenceAssets]
+      properties:
+        prompt: { type: string, minLength: 8, maxLength: 4000 }
+        referenceAssets:
+          type: array
           items:
             $ref: "#/components/schemas/PromptReferenceAsset"
     PromptConfirmInput:
@@ -2838,6 +3142,14 @@ components:
         code: { type: integer, const: 0 }
         data:
           $ref: "#/components/schemas/PromptVersion"
+    ReferencePromptSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          $ref: "#/components/schemas/ReferencePromptResult"
     GenerationSettings:
       type: object
       additionalProperties: false
@@ -2931,6 +3243,21 @@ components:
         code: { type: integer, const: 0 }
         data:
           $ref: "#/components/schemas/GenerationTask"
+    GenerationCreateSuccess:
+      type: object
+      additionalProperties: false
+      required: [code, data]
+      properties:
+        code: { type: integer, const: 0 }
+        data:
+          type: object
+          additionalProperties: false
+          required: [task, entitlement]
+          properties:
+            task:
+              $ref: "#/components/schemas/GenerationTask"
+            entitlement:
+              $ref: "#/components/schemas/Entitlement"
     GenerationTaskListSuccess:
       type: object
       additionalProperties: false
@@ -2938,9 +3265,7 @@ components:
       properties:
         code: { type: integer, const: 0 }
         data:
-          type: array
-          items:
-            $ref: "#/components/schemas/GenerationTask"
+          $ref: "#/components/schemas/GenerationTaskPage"
     RetouchStatus:
       type: string
       enum:
@@ -2995,6 +3320,7 @@ components:
         - spentCredits
         - refundedCredits
         - deliverables
+        - sla
         - createdAt
         - updatedAt
       properties:
@@ -3015,10 +3341,14 @@ components:
             $ref: "#/components/schemas/Asset"
         quote:
           type: object
+          required: [id, credits, createdAt, status, expiresAt, remainingSeconds]
           properties:
             id: { type: string, format: uuid }
             credits: { type: integer, minimum: 1 }
             createdAt: { type: string, format: date-time }
+            status: { type: string, enum: [active, accepted, invalidated, expired] }
+            expiresAt: { type: string, format: date-time }
+            remainingSeconds: { type: integer, minimum: 0 }
         timeline:
           type: array
           items:
@@ -3042,8 +3372,18 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GenerationResult"
+        sla:
+          $ref: "#/components/schemas/RetouchSLA"
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    RetouchSLA:
+      type: object
+      required: [stage, overdue]
+      properties:
+        stage: { type: string, enum: [quote, first-delivery, revision, completed] }
+        dueAt: { type: [string, "null"], format: date-time }
+        overdue: { type: boolean }
+        remainingSeconds: { type: [integer, "null"], minimum: 0 }
     RetouchTicketSuccess:
       type: object
       additionalProperties: false
@@ -3059,9 +3399,7 @@ components:
       properties:
         code: { type: integer, const: 0 }
         data:
-          type: array
-          items:
-            $ref: "#/components/schemas/RetouchTicket"
+          $ref: "#/components/schemas/RetouchTicketPage"
     ManageUserSummary:
       type: object
       additionalProperties: false
@@ -3102,7 +3440,7 @@ components:
     ManageRetouchSummary:
       type: object
       additionalProperties: false
-      required: [id, ticketNo, taskId, taskTitle, status, user, createdAt, updatedAt]
+      required: [id, ticketNo, taskId, taskTitle, status, user, sla, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         ticketNo: { type: string }
@@ -3111,6 +3449,8 @@ components:
         status:
           $ref: "#/components/schemas/RetouchStatus"
         quoteCredits: { type: integer, minimum: 1 }
+        sla:
+          $ref: "#/components/schemas/RetouchSLA"
         user:
           $ref: "#/components/schemas/ManageUserSummary"
         createdAt: { type: string, format: date-time }

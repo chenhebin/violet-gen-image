@@ -34,6 +34,14 @@ export const assetApi = {
     })
   },
 
+	getUrl(assetId: string, purpose: 'preview' | 'download' = 'preview') {
+		return apiRequest<{ url: string; expiresAt: string }>({
+			method: 'GET',
+			url: `/manage/assets/${assetId}/url`,
+			params: { purpose },
+		})
+	},
+
   setRetained(assetId: string, retained: boolean, reason: string) {
     return apiRequest<ManagedAsset>({
       method: 'POST',
@@ -52,4 +60,3 @@ export const assetApi = {
     })
   },
 }
-

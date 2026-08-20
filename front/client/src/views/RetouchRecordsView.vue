@@ -72,10 +72,15 @@ watch(
 
 async function loadRecords(reportError = true): Promise<void> {
   try {
-    await retouch.load()
+    await retouch.load({ silent: !reportError })
   } catch (caught) {
     if (reportError) showError('精修记录加载失败', caught)
   }
+}
+
+async function changeTicketPage(nextPage: number): Promise<void> {
+  if (nextPage < 1 || (nextPage > retouch.page && !retouch.hasMore)) return
+  await retouch.load({ page: nextPage })
 }
 
 async function openTicket(id: string, reportError = true): Promise<void> {
@@ -173,6 +178,12 @@ function showError(title: string, caught: unknown): void {
       @confirm="confirmDelivery"
       @request-revision="requestRevision"
     />
+
+    <nav v-if="retouch.total > retouch.pageSize" class="pagination" aria-label="人工修图记录分页">
+      <button type="button" :disabled="retouch.page <= 1 || retouch.loading" @click="changeTicketPage(retouch.page - 1)">上一页</button>
+      <span>第 {{ retouch.page }} / {{ Math.max(1, Math.ceil(retouch.total / retouch.pageSize)) }} 页</span>
+      <button type="button" :disabled="!retouch.hasMore || retouch.loading" @click="changeTicketPage(retouch.page + 1)">下一页</button>
+    </nav>
   </div>
 </template>
 
@@ -181,6 +192,30 @@ function showError(title: string, caught: unknown): void {
   width: min(1180px, calc(100% - 40px));
   padding: 36px 0 60px;
   margin: 0 auto;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 18px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pagination button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.pagination button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
 }
 
 .page-heading {

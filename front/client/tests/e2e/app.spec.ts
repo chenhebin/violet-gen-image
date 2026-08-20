@@ -194,6 +194,16 @@ test('submit and complete a human retouch ticket from task records', async ({
     taskDrawerLayout.drawerWidth,
     0,
   )
+  await ticketDrawer
+    .getByRole('button', { name: '放大查看待精修原结果 1' })
+    .click()
+  const sourceLightbox = page.getByRole('dialog', {
+    name: '图片预览：待精修原结果 1',
+  })
+  await expect(sourceLightbox).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(sourceLightbox).toBeHidden()
+  await expect(ticketDrawer).toBeVisible()
   await expect(ticketDrawer.locator('.retouch-status')).toHaveText(
     '待确认报价',
     { timeout: 10_000 },
@@ -223,6 +233,17 @@ test('submit and complete a human retouch ticket from task records', async ({
   await expect(ticketDrawer.locator('.retouch-status')).toHaveText('待确认', {
     timeout: 10_000,
   })
+
+  await ticketDrawer
+    .getByRole('button', { name: '放大查看精修交付成片 1' })
+    .click()
+  const deliverableLightbox = page.getByRole('dialog', {
+    name: '图片预览：人工精修成片 1',
+  })
+  await expect(deliverableLightbox).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(deliverableLightbox).toBeHidden()
+  await expect(ticketDrawer).toBeVisible()
 
   const downloadPromise = page.waitForEvent('download')
   await ticketDrawer.getByRole('link', { name: '下载' }).first().click()

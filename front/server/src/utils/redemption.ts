@@ -41,3 +41,11 @@ export function normalizeRedemptionCode(code: string): string {
   return code.trim().toUpperCase()
 }
 
+export function formatXianyuInventoryLine(
+  publicWebUrl: string,
+  fullCode: string,
+): string {
+  const claimUrl = new URL('/claim', publicWebUrl)
+  claimUrl.searchParams.set('code', fullCode)
+  return `浏览器打开领取并开始创作吧～：${claimUrl.toString()} ｜ 兑换码：${fullCode}`
+}

@@ -42,10 +42,15 @@ export const useEntitlementStore = defineStore('entitlement', () => {
     }
   }
 
-  async function redeem(code: string): Promise<RedemptionResult> {
+  async function redeem(
+    code: string,
+    idempotencyKey?: string,
+  ): Promise<RedemptionResult> {
     const normalized = code.trim().toUpperCase()
     const key =
-      redemptionKeys.get(normalized) ?? createIdempotencyKey('redemption')
+      idempotencyKey ??
+      redemptionKeys.get(normalized) ??
+      createIdempotencyKey('redemption')
     redemptionKeys.set(normalized, key)
     try {
       const result = await entitlementApi.redeem(normalized, key)
@@ -93,13 +98,8 @@ export const useEntitlementStore = defineStore('entitlement', () => {
     }
   }
 
-  function applyBalance(nextBalance: number): void {
-    if (!entitlement.value) return
-    entitlement.value = {
-      balance: nextBalance,
-      canCreate: nextBalance > 0,
-      status: nextBalance > 0 ? 'active' : 'empty',
-    }
+  function setFromServer(nextEntitlement: Entitlement): void {
+    entitlement.value = nextEntitlement
   }
 
   function reset(): void {
@@ -124,7 +124,7 @@ export const useEntitlementStore = defineStore('entitlement', () => {
     redeem,
     refreshLedger,
     requestQuote,
-    applyBalance,
+    setFromServer,
     reset,
   }
 })

@@ -237,7 +237,7 @@ async function exportBatch(batchId: string) {
   try {
     const file = await store.exportBatch(batchId)
     const url = URL.createObjectURL(
-      new Blob([file.csv], { type: 'text/csv;charset=utf-8' }),
+      new Blob([file.content || file.csv || ''], { type: file.mediaType }),
     )
     const anchor = document.createElement('a')
     anchor.href = url

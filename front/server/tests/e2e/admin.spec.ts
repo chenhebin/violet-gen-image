@@ -143,6 +143,22 @@ test('人工工单可从待评估进入待用户接受报价', async ({ page }) 
 
   await page.getByText('YY20260730-A1B2C3').click()
   await expect(page.getByText('人工修图说明')).toBeVisible()
+  const ticketDrawer = page.getByRole('dialog', { name: 'YY20260730-A1B2C3' })
+  await ticketDrawer
+    .getByRole('button', { name: '放大查看用户选中的 AI 成片 1' })
+    .click()
+  const lightbox = page.locator('.lightbox')
+  await expect(lightbox).toBeVisible()
+  await expect(lightbox).toHaveAttribute(
+    'aria-label',
+    '图片预览：用户选中的 AI 成片 1',
+  )
+  await expect(lightbox.getByText(/1 \/ 2/)).toBeVisible()
+  await page.keyboard.press('ArrowRight')
+  await expect(lightbox.getByText(/2 \/ 2/)).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(lightbox).toBeHidden()
+  await expect(ticketDrawer).toBeVisible()
   await page.getByRole('button', { name: '给出报价' }).click()
   await page.getByLabel('报价次数').fill('4')
   await page.getByLabel('报价说明').fill('包含肤色、碎发与背景细节处理')

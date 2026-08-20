@@ -224,9 +224,11 @@ func (h *AdminHandler) providerName(c *gin.Context, providerID string) string {
 func providerDTO(value model.AIProvider) map[string]any {
 	var lastTest any
 	if value.LastTestedAt != nil {
+		requestSummary := decodeTestDetails(value.LastTestDetails)
 		lastTest = map[string]any{
 			"testedAt": value.LastTestedAt, "success": value.ConnectionStatus == aiconfig.StatusHealthy,
-			"message": value.LastTestSummary,
+			"message":        value.LastTestSummary,
+			"requestSummary": requestSummary,
 		}
 	}
 	return map[string]any{
@@ -243,10 +245,12 @@ func modelDTO(value model.AIModel, providerName string, bindings map[string]*str
 	_ = json.Unmarshal(value.Capabilities, &capabilities)
 	var lastTest any
 	if value.LastTestedAt != nil {
+		requestSummary := decodeTestDetails(value.LastTestDetails)
 		lastTest = map[string]any{
-			"testedAt": value.LastTestedAt,
-			"success":  value.TestStatus == aiconfig.StatusHealthy,
-			"message":  value.LastTestSummary,
+			"testedAt":       value.LastTestedAt,
+			"success":        value.TestStatus == aiconfig.StatusHealthy,
+			"message":        value.LastTestSummary,
+			"requestSummary": requestSummary,
 		}
 	}
 	isPlatform := false
@@ -263,6 +267,17 @@ func modelDTO(value model.AIModel, providerName string, bindings map[string]*str
 		"createdAt": value.CreatedAt, "updatedAt": value.UpdatedAt,
 		"isPlatformModel": isPlatform,
 	}
+}
+
+func decodeTestDetails(raw []byte) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil
+	}
+	return value
 }
 
 func bindingsDTO(value map[string]*string) map[string]*string {

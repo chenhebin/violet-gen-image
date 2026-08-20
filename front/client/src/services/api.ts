@@ -3,6 +3,7 @@ import type {
   AssetKind,
   AuthPayload,
   Entitlement,
+  GenerationCreateResult,
   GenerationSettings,
   GenerationTask,
   LedgerEntry,
@@ -10,6 +11,7 @@ import type {
   PromptReferenceAsset,
   PromptVersion,
   RedemptionResult,
+  RedemptionPreview,
   ReferenceRole,
   RegisterPayload,
   RetouchTicket,
@@ -19,6 +21,7 @@ import type {
   WorkspaceMode,
 } from '@/types/domain'
 import { NETWORK_CONFIG } from '@/config'
+import type { PageResult } from '@/types/api'
 import { apiRequest, createIdempotencyKey } from './http'
 import {
   cacheAssetFile,
@@ -56,6 +59,14 @@ export const entitlementApi = {
   ledger() {
     return apiRequest<LedgerEntry[]>({ method: 'GET', url: '/usage/ledger' })
   },
+  previewRedemption(code: string, signal?: AbortSignal) {
+    return apiRequest<RedemptionPreview>({
+      method: 'POST',
+      url: '/redemptions/preview',
+      data: { code },
+      signal,
+    })
+  },
   redeem(code: string, idempotencyKey = createIdempotencyKey('redeem')) {
     return apiRequest<RedemptionResult>({
       method: 'POST',
@@ -74,7 +85,45 @@ export const entitlementApi = {
   },
 }
 
+export interface AIProcessingNotice {
+  version: string
+  title: string
+  providerDisclosure: string
+  securitySummary: string
+  purpose: string
+  processingScope: string[]
+  retentionDays: number
+  stopUseDescription: string
+  acknowledged: boolean
+  acknowledgedAt?: string
+}
+
+export const aiNoticeApi = {
+  get(signal?: AbortSignal) {
+    return apiRequest<AIProcessingNotice>({
+      method: 'GET',
+      url: '/notices/ai-processing',
+      signal,
+    })
+  },
+  acknowledge(version: string, idempotencyKey = createIdempotencyKey('ai-notice-ack')) {
+    return apiRequest<AIProcessingNotice>({
+      method: 'POST',
+      url: '/notices/ai-processing/ack',
+      data: { version },
+      headers: { 'Idempotency-Key': idempotencyKey },
+    })
+  },
+}
+
 export const assetApi = {
+	getUrl(assetId: string, purpose: 'preview' | 'download' = 'preview') {
+		return apiRequest<{ url: string; expiresAt: string }>({
+			method: 'GET',
+			url: `/assets/${assetId}/url`,
+			params: { purpose },
+		})
+	},
   async upload(
     file: File,
     kind: AssetKind,
@@ -91,6 +140,7 @@ export const assetApi = {
       method: 'POST',
       url: '/assets',
       data: formData,
+      headers: { 'Idempotency-Key': createIdempotencyKey('asset-upload') },
       signal,
       timeout: NETWORK_CONFIG.uploadTimeoutMs,
       onUploadProgress(event) {
@@ -106,15 +156,23 @@ export const assetApi = {
       uploadProgress: 100,
     }
   },
-  async hydrate(asset: Asset): Promise<Asset> {
-    if (asset.previewUrl) return asset
-    return { ...asset, previewUrl: await loadAssetUrl(asset.id) }
-  },
+	async hydrate(asset: Asset): Promise<Asset> {
+		const expiresAt = asset.previewUrlExpiresAt ? Date.parse(asset.previewUrlExpiresAt) : 0
+		if (asset.previewUrl && (!expiresAt || expiresAt - Date.now() > 60_000)) return asset
+		try {
+			const signed = await assetApi.getUrl(asset.id)
+			return { ...asset, previewUrl: signed.url, previewUrlExpiresAt: signed.expiresAt }
+		} catch {
+			if (asset.previewUrl) return asset
+			return { ...asset, previewUrl: await loadAssetUrl(asset.id) }
+		}
+	},
   async remove(assetId: string): Promise<void> {
     try {
       await apiRequest<null>({
         method: 'DELETE',
         url: `/assets/${assetId}`,
+        headers: { 'Idempotency-Key': createIdempotencyKey('asset-delete') },
       })
     } finally {
       await removeCachedAsset(assetId)
@@ -127,9 +185,27 @@ export interface OptimizePromptPayload {
   mode: WorkspaceMode
   sourceAssetIds: string[]
   referenceAssets: PromptReferenceAsset[]
+  referencePrompt?: string
+}
+
+export interface ReferencePromptResult {
+  prompt: string
+  referenceAssets: PromptReferenceAsset[]
 }
 
 export const promptApi = {
+  describeReferences(
+    referenceAssets: PromptReferenceAsset[],
+    signal?: AbortSignal,
+  ): Promise<ReferencePromptResult> {
+    return apiRequest<ReferencePromptResult>({
+      method: 'POST',
+      url: '/prompts/reference-prompt',
+      data: { referenceAssets },
+      signal,
+      timeout: NETWORK_CONFIG.promptTimeoutMs,
+    })
+  },
   optimize(
     payload: OptimizePromptPayload,
     signal?: AbortSignal,
@@ -146,11 +222,13 @@ export const promptApi = {
     id: string,
     source: string,
     sections: PromptSections,
+    idempotencyKey = createIdempotencyKey('prompt-confirm'),
   ): Promise<PromptVersion> {
     return apiRequest<PromptVersion>({
       method: 'POST',
       url: '/prompts/confirm',
       data: { id, source, sections },
+      headers: { 'Idempotency-Key': idempotencyKey },
     })
   },
 }
@@ -178,18 +256,22 @@ export const generationApi = {
   async create(
     payload: CreateGenerationPayload,
     idempotencyKey = createIdempotencyKey('generation'),
-  ) {
-    const task = await apiRequest<ApiGenerationTask>({
+  ): Promise<GenerationCreateResult> {
+    const result = await apiRequest<{
+      task: ApiGenerationTask
+      entitlement: Entitlement
+    }>({
       method: 'POST',
       url: '/generations',
       data: payload,
       headers: { 'Idempotency-Key': idempotencyKey },
     })
-    const normalized = normalizeTask(task)
+    const normalized = normalizeTask(result.task)
     return {
       ...normalized,
       assets: await Promise.all(normalized.assets.map(assetApi.hydrate)),
-    }
+      entitlement: result.entitlement,
+    } satisfies GenerationCreateResult
   },
 }
 
@@ -205,21 +287,28 @@ function normalizeTask(task: ApiGenerationTask): GenerationTask {
 }
 
 export const taskApi = {
-  async list(signal?: AbortSignal): Promise<GenerationTask[]> {
-    const tasks = await apiRequest<ApiGenerationTask[]>({
+  async list(
+    query: { page?: number; pageSize?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<PageResult<GenerationTask>> {
+    const page = await apiRequest<PageResult<ApiGenerationTask>>({
       method: 'GET',
       url: '/tasks',
+      params: query,
       signal,
     })
-    return Promise.all(
-      tasks.map(async (task) => {
+    return {
+      ...page,
+      items: await Promise.all(
+        page.items.map(async (task) => {
         const normalized = normalizeTask(task)
         return {
           ...normalized,
           assets: await Promise.all(normalized.assets.map(assetApi.hydrate)),
         }
-      }),
-    )
+        }),
+      ),
+    }
   },
   async get(
     taskId: string,
@@ -236,20 +325,25 @@ export const taskApi = {
       assets: await Promise.all(normalized.assets.map(assetApi.hydrate)),
     }
   },
-  async cancel(taskId: string): Promise<GenerationTask> {
+  async cancel(
+    taskId: string,
+    idempotencyKey = createIdempotencyKey('task-cancel'),
+  ): Promise<GenerationTask> {
     const task = await apiRequest<ApiGenerationTask>({
       method: 'POST',
       url: `/tasks/${taskId}/cancel`,
+      headers: { 'Idempotency-Key': idempotencyKey },
     })
     return normalizeTask(task)
   },
 }
 
 export const retouchTicketApi = {
-  list(signal?: AbortSignal) {
-    return apiRequest<RetouchTicket[]>({
+  list(query: { page?: number; pageSize?: number } = {}, signal?: AbortSignal) {
+    return apiRequest<PageResult<RetouchTicket>>({
       method: 'GET',
       url: '/retouch-tickets',
+      params: query,
       signal,
     })
   },

@@ -28,6 +28,10 @@ export const dashboardHandlers = [
         )
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
         .map((item) => publicTicketSummary(item, db))
+      const overdueTickets = pendingTickets.filter((item) => item.sla.overdue)
+      const dueSoonTickets = pendingTickets.filter(
+        (item) => !item.sla.overdue && item.sla.remainingSeconds !== null && item.sla.remainingSeconds <= 24 * 60 * 60,
+      )
 
       if (admin.role === 'retouch_operator') {
         return {
@@ -37,6 +41,12 @@ export const dashboardHandlers = [
               label: '待处理人工工单',
               value: pendingTickets.length,
               tone: pendingTickets.length ? 'warning' : 'positive',
+            },
+            {
+              key: 'overdueTickets',
+              label: '已逾期工单',
+              value: overdueTickets.length,
+              tone: overdueTickets.length ? 'danger' : 'positive',
             },
           ],
           currentModels: {},
@@ -92,12 +102,24 @@ export const dashboardHandlers = [
           value: failedTasks.length,
           tone: failedTasks.length ? 'danger' : 'positive',
         },
-        {
-          key: 'pendingTickets',
+          {
+            key: 'pendingTickets',
           label: '待处理工单',
           value: pendingTickets.length,
-          tone: pendingTickets.length ? 'warning' : 'positive',
-        },
+            tone: pendingTickets.length ? 'warning' : 'positive',
+          },
+          {
+            key: 'overdueTickets',
+            label: '已逾期工单',
+            value: overdueTickets.length,
+            tone: overdueTickets.length ? 'danger' : 'positive',
+          },
+          {
+            key: 'dueSoonTickets',
+            label: '即将逾期工单',
+            value: dueSoonTickets.length,
+            tone: dueSoonTickets.length ? 'warning' : 'positive',
+          },
       ]
 
       const alerts: DashboardAlert[] = db.providers
@@ -169,4 +191,3 @@ export const dashboardHandlers = [
     }),
   ),
 ]
-

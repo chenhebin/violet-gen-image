@@ -22,11 +22,12 @@ type CreateInput struct {
 }
 
 type ResultDTO struct {
-	ID          string `json:"id"`
-	URL         string `json:"url"`
-	DownloadURL string `json:"downloadUrl"`
-	Width       int    `json:"width"`
-	Height      int    `json:"height"`
+	ID           string     `json:"id"`
+	URL          string     `json:"url"`
+	DownloadURL  string     `json:"downloadUrl"`
+	URLExpiresAt *time.Time `json:"urlExpiresAt,omitempty"`
+	Width        int        `json:"width"`
+	Height       int        `json:"height"`
 }
 
 type RetouchSummary struct {
@@ -55,4 +56,12 @@ type TaskDTO struct {
 	RetouchTicket   *RetouchSummary `json:"retouchTicket,omitempty"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
+}
+
+type TaskPage struct {
+	Items    []TaskDTO `json:"items"`
+	Page     int       `json:"page"`
+	PageSize int       `json:"pageSize"`
+	Total    int64     `json:"total"`
+	HasMore  bool      `json:"hasMore"`
 }

@@ -73,6 +73,10 @@ export const useAuthStore = defineStore('auth', () => {
     loading.value = false
   }
 
+  function clearError(): void {
+    error.value = ''
+  }
+
   return {
     user,
     initialized,
@@ -84,5 +88,6 @@ export const useAuthStore = defineStore('auth', () => {
     register,
     logout,
     invalidateSession,
+    clearError,
   }
 })

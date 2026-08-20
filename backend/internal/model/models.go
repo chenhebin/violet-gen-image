@@ -33,6 +33,14 @@ type User struct {
 	TemporaryPasswordUntil *time.Time
 }
 
+type UserAIProcessingNotice struct {
+	BaseModel
+	UserID         string    `gorm:"type:uuid;not null;uniqueIndex"`
+	NoticeVersion  string    `gorm:"size:64;not null"`
+	AcknowledgedAt time.Time `gorm:"not null"`
+	User           User      `gorm:"constraint:OnDelete:CASCADE"`
+}
+
 type AdminAccount struct {
 	BaseModel
 	Email                  string `gorm:"size:320;not null;uniqueIndex"`
@@ -203,10 +211,11 @@ type AIProvider struct {
 	Enabled          bool   `gorm:"not null;default:true;index"`
 	ConnectionStatus string `gorm:"size:32;not null;default:untested;index"`
 	LastTestedAt     *time.Time
-	LastTestSummary  string `gorm:"size:500"`
-	ConfigVersion    int64  `gorm:"not null;default:1"`
-	Notes            string `gorm:"size:1000"`
-	Version          int64  `gorm:"not null;default:1"`
+	LastTestSummary  string         `gorm:"size:500"`
+	LastTestDetails  datatypes.JSON `gorm:"type:jsonb"`
+	ConfigVersion    int64          `gorm:"not null;default:1"`
+	Notes            string         `gorm:"size:1000"`
+	Version          int64          `gorm:"not null;default:1"`
 }
 
 func (AIProvider) TableName() string {
@@ -223,9 +232,10 @@ type AIModel struct {
 	Enabled         bool           `gorm:"not null;default:true;index"`
 	TestStatus      string         `gorm:"size:32;not null;default:untested;index"`
 	LastTestedAt    *time.Time
-	LastTestSummary string `gorm:"size:500"`
-	ConfigVersion   int64  `gorm:"not null;default:1"`
-	Version         int64  `gorm:"not null;default:1"`
+	LastTestSummary string         `gorm:"size:500"`
+	LastTestDetails datatypes.JSON `gorm:"type:jsonb"`
+	ConfigVersion   int64          `gorm:"not null;default:1"`
+	Version         int64          `gorm:"not null;default:1"`
 }
 
 type PlatformModelBinding struct {
@@ -280,6 +290,7 @@ type GenerationTask struct {
 	StartedAt                *time.Time
 	CompletedAt              *time.Time
 	CancelledAt              *time.Time
+	TimedOutAt               *time.Time
 	ErrorCode                string `gorm:"size:80"`
 	ErrorSummary             string `gorm:"size:500"`
 	Version                  int64  `gorm:"not null;default:1"`
@@ -309,20 +320,22 @@ type GenerationOutput struct {
 
 type GenerationJob struct {
 	BaseModel
-	JobType     string    `gorm:"size:40;not null;index"`
-	TaskID      string    `gorm:"type:uuid;not null;index"`
-	OutputID    *string   `gorm:"type:uuid;uniqueIndex"`
-	Status      string    `gorm:"size:32;not null;index:idx_generation_job_claim,priority:1"`
-	Attempts    int       `gorm:"not null;default:0"`
-	MaxAttempts int       `gorm:"not null;default:1"`
-	AvailableAt time.Time `gorm:"not null;index:idx_generation_job_claim,priority:2"`
-	LockedBy    string    `gorm:"size:128;index"`
-	LockedAt    *time.Time
-	HeartbeatAt *time.Time
-	StartedAt   *time.Time
-	CompletedAt *time.Time
-	LastError   string `gorm:"size:1000"`
-	Version     int64  `gorm:"not null;default:1"`
+	JobType       string    `gorm:"size:40;not null;index"`
+	TaskID        string    `gorm:"type:uuid;not null;index"`
+	OutputID      *string   `gorm:"type:uuid;uniqueIndex"`
+	Status        string    `gorm:"size:32;not null;index:idx_generation_job_claim,priority:1"`
+	Attempts      int       `gorm:"not null;default:0"`
+	MaxAttempts   int       `gorm:"not null;default:1"`
+	AvailableAt   time.Time `gorm:"not null;index:idx_generation_job_claim,priority:2"`
+	LockedBy      string    `gorm:"size:128;index"`
+	LockedAt      *time.Time
+	HeartbeatAt   *time.Time
+	StartedAt     *time.Time
+	DeadlineAt    *time.Time
+	CompletedAt   *time.Time
+	LastError     string `gorm:"size:1000"`
+	TimeoutReason string `gorm:"size:80"`
+	Version       int64  `gorm:"not null;default:1"`
 }
 
 type ProviderAttempt struct {
@@ -331,12 +344,19 @@ type ProviderAttempt struct {
 	ProviderID        string `gorm:"type:uuid;not null;index"`
 	ModelID           string `gorm:"type:uuid;not null"`
 	AttemptNo         int    `gorm:"not null;uniqueIndex:idx_provider_attempt"`
+	Operation         string `gorm:"size:40;not null;default:''"`
+	HTTPMethod        string `gorm:"size:10;not null;default:''"`
+	EndpointPath      string `gorm:"size:255;not null;default:''"`
+	ModelName         string `gorm:"size:255;not null;default:''"`
 	Status            string `gorm:"size:32;not null;index"`
 	ExternalRequestID string `gorm:"size:255"`
 	RequestAccepted   *bool
+	ResponseStatus    int `gorm:"not null;default:0"`
 	LatencyMillis     int64
 	ErrorCode         string         `gorm:"size:80"`
+	ErrorKind         string         `gorm:"size:40"`
 	ErrorSummary      string         `gorm:"size:500"`
+	RequestSummary    datatypes.JSON `gorm:"type:jsonb"`
 	ResponseMetadata  datatypes.JSON `gorm:"type:jsonb"`
 	StartedAt         time.Time      `gorm:"not null"`
 	CompletedAt       *time.Time
@@ -370,6 +390,9 @@ type RetouchTicket struct {
 	RevisionUsed        bool    `gorm:"not null;default:false"`
 	ClosedReason        string  `gorm:"size:1000"`
 	QuotedAt            *time.Time
+	QuoteDueAt          *time.Time
+	FirstDeliveryDueAt  *time.Time
+	RevisionDueAt       *time.Time
 	AcceptedAt          *time.Time
 	StartedAt           *time.Time
 	DeliveredAt         *time.Time
@@ -387,6 +410,7 @@ type RetouchQuote struct {
 	CreatedBy     string `gorm:"type:uuid;not null"`
 	AcceptedAt    *time.Time
 	InvalidatedAt *time.Time
+	ExpiresAt     time.Time `gorm:"not null;index"`
 }
 
 type RetouchRevision struct {
@@ -458,7 +482,7 @@ type AuditLog struct {
 
 func AllModels() []any {
 	return []any{
-		&User{}, &AdminAccount{}, &UserSession{}, &AdminSession{},
+		&User{}, &UserAIProcessingNotice{}, &AdminAccount{}, &UserSession{}, &AdminSession{},
 		&CreditAccount{}, &CreditReservation{}, &CreditLedgerEntry{},
 		&RedemptionBatch{}, &RedemptionCode{}, &RedemptionClaim{},
 		&Asset{}, &AssetRelation{}, &PromptVersion{},

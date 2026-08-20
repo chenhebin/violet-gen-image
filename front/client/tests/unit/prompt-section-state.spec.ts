@@ -217,9 +217,27 @@ describe('prompt section unchanged state', () => {
       .spyOn(generationApi, 'create')
       .mockResolvedValue({ id: 'direct-task' } as GenerationTask)
     const workspace = useWorkspaceStore()
+    workspace.setSourcePrompt('生成一张自然光室内人像')
+
+    expect(workspace.canSubmit).toBe(true)
+    await workspace.submit()
+
+    expect(create).toHaveBeenCalledWith(
+      {
+        source: '生成一张自然光室内人像',
+        referenceAssets: [],
+        assetIds: [],
+        settings: workspace.draft.settings,
+      },
+      expect.any(String),
+    )
+  })
+
+  it('requires a source image before preparing a reference image prompt', async () => {
+    const workspace = useWorkspaceStore()
     workspace.setSourcePrompt('参考这张图片生成一张自然光室内人像')
     workspace.draft.assets.push({
-      id: 'reference-1',
+      id: 'reference-only',
       name: 'reference.png',
       kind: 'reference',
       role: 'composition',
@@ -228,20 +246,67 @@ describe('prompt section unchanged state', () => {
       uploadProgress: 100,
     })
 
-    expect(workspace.canSubmit).toBe(true)
-    await workspace.submit()
+    await expect(workspace.submit()).rejects.toThrow('请先上传待修改原图')
+  })
 
-    expect(create).toHaveBeenCalledWith(
+  it('prepares a reference prompt before allowing image generation', async () => {
+    const describeReferences = vi
+      .spyOn(promptApi, 'describeReferences')
+      .mockResolvedValue({
+        prompt: '清透杂志氛围，50mm 镜头，柔和侧逆光，真实材质细节',
+        referenceAssets: [{ assetId: 'reference-1', role: 'style' }],
+      })
+    const optimize = vi
+      .spyOn(promptApi, 'optimize')
+      .mockResolvedValue(structuredClone(optimizedPrompt))
+    const create = vi.spyOn(generationApi, 'create')
+    const workspace = useWorkspaceStore()
+    workspace.setSourcePrompt('只修改服装颜色')
+    workspace.draft.assets.push(
       {
-        source: '参考这张图片生成一张自然光室内人像',
-        referenceAssets: [
-          { assetId: 'reference-1', role: 'composition' },
-        ],
-        assetIds: ['reference-1'],
-        settings: workspace.draft.settings,
+        id: 'source-1',
+        name: 'source.png',
+        kind: 'source',
+        mimeType: 'image/png',
+        size: 128,
+        uploadProgress: 100,
       },
-      expect.any(String),
+      {
+        id: 'reference-1',
+        name: 'reference.png',
+        kind: 'reference',
+        role: 'style',
+        mimeType: 'image/png',
+        size: 128,
+        uploadProgress: 100,
+      },
     )
+
+    const result = await workspace.submit()
+
+    expect(result).toBeNull()
+    expect(describeReferences).toHaveBeenCalledWith(
+      [{ assetId: 'reference-1', role: 'style' }],
+      expect.anything(),
+    )
+    expect(optimize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceAssetIds: ['source-1'],
+        referencePrompt: '清透杂志氛围，50mm 镜头，柔和侧逆光，真实材质细节',
+      }),
+      expect.anything(),
+    )
+    expect(workspace.draft.promptVersion?.sections.referencePrompt).toContain(
+      '清透杂志氛围',
+    )
+    for (const { key } of PROMPT_SECTION_OPTIONS) {
+      expect(workspace.isPromptSectionUnchanged(key)).toBe(false)
+      expect(workspace.draft.promptVersion?.sections[key]).toBe(
+        optimizedPrompt.sections[key],
+      )
+      expect(workspace.draft.promptSectionBackups[key]).toBeUndefined()
+    }
+    expect(create).not.toHaveBeenCalled()
   })
 
   it('migrates an existing optimized draft to the default protected state', () => {

@@ -43,10 +43,12 @@ func NormalizeBatchName(name string) (string, error) {
 }
 
 type Service struct {
-	db               *gorm.DB
-	credits          *credit.Service
-	encryptionKey    string
-	redemptionPepper string
+	db                *gorm.DB
+	credits           *credit.Service
+	encryptionKey     string
+	redemptionPepper  string
+	clientProductCode string
+	clientProductName string
 }
 
 type Entitlement struct {
@@ -58,6 +60,14 @@ type Entitlement struct {
 type ClaimResult struct {
 	Added       int         `json:"added"`
 	Entitlement Entitlement `json:"entitlement"`
+}
+
+type PreviewResult struct {
+	Valid       bool       `json:"valid"`
+	Credits     int        `json:"credits"`
+	ProductName string     `json:"productName"`
+	MaskedCode  string     `json:"maskedCode"`
+	ExpiresAt   *time.Time `json:"expiresAt"`
 }
 
 type CreateBatchInput struct {
@@ -86,13 +96,45 @@ func New(
 	credits *credit.Service,
 	encryptionKey string,
 	redemptionPepper string,
+	clientProductCode string,
+	clientProductName string,
 ) *Service {
 	return &Service{
-		db:               db,
-		credits:          credits,
-		encryptionKey:    encryptionKey,
-		redemptionPepper: redemptionPepper,
+		db:                db,
+		credits:           credits,
+		encryptionKey:     encryptionKey,
+		redemptionPepper:  redemptionPepper,
+		clientProductCode: strings.TrimSpace(clientProductCode),
+		clientProductName: strings.TrimSpace(clientProductName),
 	}
+}
+
+func (s *Service) Preview(ctx context.Context, rawCode string) (*PreviewResult, error) {
+	normalized := security.NormalizeRedemptionCode(rawCode)
+	if normalized == "" {
+		return nil, apierror.Invalid("请输入兑换码", nil)
+	}
+
+	var code model.RedemptionCode
+	err := s.db.WithContext(ctx).
+		Where("code_digest = ?", security.HMACDigest(normalized, s.redemptionPepper)).
+		First(&code).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, redemptionInvalid()
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateCode(code, "", false); err != nil {
+		return nil, err
+	}
+	return &PreviewResult{
+		Valid:       true,
+		Credits:     code.Credits,
+		ProductName: s.clientProductName,
+		MaskedCode:  code.MaskedCode,
+		ExpiresAt:   code.ExpiresAt,
+	}, nil
 }
 
 func Status(code model.RedemptionCode, now time.Time) string {
@@ -147,39 +189,14 @@ func (s *Service) Claim(
 			Where("code_digest = ?", digest).
 			First(&code).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return apierror.New(
-				http.StatusNotFound,
-				apierror.CodeRedemptionInvalid,
-				"兑换码无效",
-				nil,
-			)
+			return redemptionInvalid()
 		}
 		if err != nil {
 			return err
 		}
 
-		switch Status(code, time.Now().UTC()) {
-		case StatusRedeemed:
-			return apierror.New(
-				http.StatusConflict,
-				apierror.CodeRedemptionUsed,
-				"兑换码已使用",
-				nil,
-			)
-		case StatusExpired:
-			return apierror.New(
-				http.StatusGone,
-				apierror.CodeRedemptionExpired,
-				"兑换码已过期",
-				nil,
-			)
-		case StatusDisabled:
-			return apierror.New(
-				http.StatusNotFound,
-				apierror.CodeRedemptionInvalid,
-				"兑换码无效",
-				nil,
-			)
+		if err := s.validateCode(code, userID, true); err != nil {
+			return err
 		}
 
 		now := time.Now().UTC()
@@ -245,6 +262,35 @@ func (s *Service) Claim(
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (s *Service) validateCode(code model.RedemptionCode, userID string, revealOwnership bool) error {
+	if code.ProductCode != s.clientProductCode {
+		return apierror.New(
+			http.StatusConflict,
+			apierror.CodeProductMismatch,
+			"兑换码不适用于当前商品",
+			nil,
+		)
+	}
+	switch Status(code, time.Now().UTC()) {
+	case StatusRedeemed:
+		details := map[string]any(nil)
+		if revealOwnership && userID != "" && code.RedeemedBy != nil && *code.RedeemedBy == userID {
+			details = map[string]any{"claimedByCurrentUser": true}
+		}
+		return apierror.New(http.StatusConflict, apierror.CodeRedemptionUsed, "兑换码已使用", details)
+	case StatusExpired:
+		return apierror.New(http.StatusGone, apierror.CodeRedemptionExpired, "兑换码已过期", nil)
+	case StatusDisabled:
+		return redemptionInvalid()
+	default:
+		return nil
+	}
+}
+
+func redemptionInvalid() error {
+	return apierror.New(http.StatusNotFound, apierror.CodeRedemptionInvalid, "兑换码无效", nil)
 }
 
 func (s *Service) CreateBatch(

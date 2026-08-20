@@ -70,6 +70,7 @@ export type MockTicket = Omit<
 > & {
   userId: string
   supplementalAssetIds: string[]
+  acceptedAt?: string
 }
 
 export interface MockIdempotencyEntry {

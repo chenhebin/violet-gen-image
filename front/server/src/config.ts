@@ -64,6 +64,7 @@ export const REDEMPTION_CONFIG = {
   defaultValidityDays: 90,
   expiringSoonDays: 7,
   codePrefix: 'YY',
+  publicWebUrl: 'https://img.daidaiweb.cn',
 } as const
 
 export const REDEMPTION_STATUS_LABELS: Record<

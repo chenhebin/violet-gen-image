@@ -56,15 +56,24 @@ export interface RedemptionResult {
   entitlement: Entitlement
 }
 
+export interface RedemptionPreview {
+  valid: true
+  credits: number
+  productName: string
+  maskedCode: string
+  expiresAt: string | null
+}
+
 export interface Asset {
   id: string
   name: string
   kind: AssetKind
   role?: ReferenceRole
   mimeType: string
-  size: number
-  previewUrl?: string
-  uploadProgress: number
+	size: number
+	previewUrl?: string
+	previewUrlExpiresAt?: string
+	uploadProgress: number
 }
 
 export interface PromptSections {
@@ -75,6 +84,7 @@ export interface PromptSections {
   details: string
   negative: string
   output: string
+  referencePrompt?: string
 }
 
 export type PromptSectionBackups = Partial<PromptSections>
@@ -108,6 +118,7 @@ export interface GenerationResult {
   id: string
   url: string
   downloadUrl?: string
+  urlExpiresAt?: string
   width: number
   height: number
 }
@@ -130,6 +141,16 @@ export interface RetouchQuote {
   id: string
   credits: number
   createdAt: string
+  status: 'active' | 'accepted' | 'invalidated' | 'expired'
+  expiresAt: string
+  remainingSeconds: number
+}
+
+export interface RetouchSLA {
+  stage: 'quote' | 'first-delivery' | 'revision' | 'completed'
+  dueAt: string | null
+  overdue: boolean
+  remainingSeconds: number | null
 }
 
 export interface RetouchRevision {
@@ -153,6 +174,7 @@ export interface RetouchTicket {
   refundedCredits: number
   revision?: RetouchRevision
   deliverables: GenerationResult[]
+  sla: RetouchSLA
   createdAt: string
   updatedAt: string
 }
@@ -177,10 +199,15 @@ export interface GenerationTask {
   updatedAt: string
 }
 
+export interface GenerationCreateResult extends GenerationTask {
+  entitlement?: Entitlement
+}
+
 export interface WorkspaceDraft {
   mode: WorkspaceMode
   sourcePrompt: string
   assets: Asset[]
+  referencePrompt: string
   promptVersion: PromptVersion | null
   promptSectionBackups: PromptSectionBackups
   settings: GenerationSettings

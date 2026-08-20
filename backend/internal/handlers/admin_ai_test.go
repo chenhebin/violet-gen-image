@@ -21,6 +21,7 @@ func TestModelDTOIncludesSafeTestSummary(t *testing.T) {
 		TestStatus:      "error",
 		LastTestedAt:    &testedAt,
 		LastTestSummary: "模型测试失败：provider generate_image failed: timeout",
+		LastTestDetails: []byte(`{"operation":"generate_image","method":"POST","path":"/v1/images/generations","model":"gpt-image-2","parameterSummary":{"promptLength":12},"status":504,"latencyMs":3000,"errorKind":"timeout"}`),
 	}
 	value.ID = "model-1"
 
@@ -34,5 +35,9 @@ func TestModelDTOIncludesSafeTestSummary(t *testing.T) {
 	}
 	if message := lastTest["message"]; message != value.LastTestSummary {
 		t.Fatalf("message = %v", message)
+	}
+	requestSummary, ok := lastTest["requestSummary"].(map[string]any)
+	if !ok || requestSummary["path"] != "/v1/images/generations" {
+		t.Fatalf("requestSummary = %#v", lastTest["requestSummary"])
 	}
 }

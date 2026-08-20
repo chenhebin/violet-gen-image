@@ -16,6 +16,7 @@ import (
 	"yingyan.local/backend/internal/ai"
 	"yingyan.local/backend/internal/apierror"
 	"yingyan.local/backend/internal/asset"
+	"yingyan.local/backend/internal/idempotency"
 	"yingyan.local/backend/internal/model"
 	"yingyan.local/backend/internal/provider"
 )
@@ -33,6 +34,10 @@ type Sections struct {
 	Details     string `json:"details"`
 	Negative    string `json:"negative"`
 	Output      string `json:"output"`
+	// ReferencePrompt is generated from reference images and is only used as
+	// textual context during prompt composition. It is never sent to the image
+	// editing endpoint as an image input.
+	ReferencePrompt string `json:"referencePrompt,omitempty"`
 }
 
 type ReferenceAsset struct {
@@ -44,6 +49,16 @@ type OptimizeInput struct {
 	Source          string           `json:"source"`
 	Mode            string           `json:"mode"`
 	SourceAssetIDs  []string         `json:"sourceAssetIds"`
+	ReferenceAssets []ReferenceAsset `json:"referenceAssets"`
+	ReferencePrompt string           `json:"referencePrompt,omitempty"`
+}
+
+type ReferencePromptInput struct {
+	ReferenceAssets []ReferenceAsset `json:"referenceAssets"`
+}
+
+type ReferencePromptDTO struct {
+	Prompt          string           `json:"prompt"`
 	ReferenceAssets []ReferenceAsset `json:"referenceAssets"`
 }
 
@@ -74,6 +89,72 @@ func New(db *gorm.DB, assets *asset.Service, factory *ai.Factory, logger *slog.L
 	return &Service{db: db, assets: assets, factory: factory, logger: logger}
 }
 
+// DescribeReferences converts reference images into a textual, Midjourney-
+// style description. The result is deliberately separate from generation so
+// reference images never become equal-weight image-edit inputs.
+func (s *Service) DescribeReferences(
+	ctx context.Context,
+	userID string,
+	input ReferencePromptInput,
+) (*ReferencePromptDTO, error) {
+	if len(input.ReferenceAssets) < 1 || len(input.ReferenceAssets) > 8 {
+		return nil, apierror.Invalid("请选择 1 到 8 张参考图", nil)
+	}
+
+	imageDataURLs := make([]string, 0, len(input.ReferenceAssets))
+	for _, reference := range input.ReferenceAssets {
+		if !IsValidReferenceRole(reference.Role) {
+			return nil, apierror.Invalid("参考图用途无效", map[string]string{"assetId": reference.AssetID})
+		}
+		assetModel, err := s.assets.GetOwned(ctx, userID, reference.AssetID)
+		if err != nil {
+			return nil, err
+		}
+		if assetModel.Kind != asset.KindReference {
+			return nil, apierror.Invalid("参考图素材用途不匹配", map[string]string{"assetId": reference.AssetID})
+		}
+		dataURL, err := s.assets.DataURL(ctx, *assetModel)
+		if err != nil {
+			return nil, err
+		}
+		imageDataURLs = append(imageDataURLs, dataURL)
+	}
+
+	providerModel, aiModel, err := s.currentModel(ctx, "chat")
+	if err != nil {
+		return nil, err
+	}
+	capabilities := map[string]bool{}
+	if err := json.Unmarshal(aiModel.Capabilities, &capabilities); err != nil {
+		return nil, apierror.Internal(err)
+	}
+	if !capabilities["promptOptimization"] || !capabilities["visionInput"] {
+		return nil, apierror.New(http.StatusConflict, apierror.CodeAICapability, "当前对话模型不支持参考图分析", nil)
+	}
+	adapter, err := s.factory.FromProvider(providerModel)
+	if err != nil {
+		return nil, apierror.New(http.StatusBadGateway, apierror.CodeAIProvider, "AI 服务配置不可用", nil)
+	}
+
+	result, err := adapter.OptimizePrompt(ctx, provider.OptimizePromptRequest{
+		Model:         aiModel.ModelID,
+		SystemPrompt:  referencePromptSystemPrompt,
+		Prompt:        buildReferencePromptInput(input.ReferenceAssets),
+		ImageDataURLs: imageDataURLs,
+	})
+	if err != nil {
+		return nil, apierror.New(http.StatusBadGateway, apierror.CodeAIProvider, "参考图分析服务暂时不可用", nil)
+	}
+	promptText := parseReferencePrompt(result.Content)
+	if len([]rune(promptText)) < 8 || len([]rune(promptText)) > 4000 {
+		return nil, apierror.New(http.StatusBadGateway, apierror.CodeAIProvider, "AI 返回的参考图提示词无效，请重试", nil)
+	}
+	return &ReferencePromptDTO{
+		Prompt:          promptText,
+		ReferenceAssets: input.ReferenceAssets,
+	}, nil
+}
+
 func (s *Service) Optimize(ctx context.Context, userID string, input OptimizeInput) (*DTO, error) {
 	input.Source = strings.TrimSpace(input.Source)
 	if len([]rune(input.Source)) < 4 || len([]rune(input.Source)) > 2000 {
@@ -83,7 +164,23 @@ func (s *Service) Optimize(ctx context.Context, userID string, input OptimizeInp
 	if imageCount > 8 {
 		return nil, apierror.Invalid("参与优化的素材不能超过 8 张", nil)
 	}
-	input.Mode = promptModeForImageCount(imageCount)
+	input.Mode = strings.TrimSpace(input.Mode)
+	derivedMode := promptModeForImageCount(imageCount)
+	if input.Mode == "" {
+		input.Mode = derivedMode
+	}
+	if input.Mode != derivedMode {
+		return nil, apierror.Invalid("创作模式与素材用途不匹配", nil)
+	}
+	if len(input.ReferenceAssets) > 0 {
+		if len(input.SourceAssetIDs) == 0 {
+			return nil, apierror.Invalid("图生图必须上传待修改原图", nil)
+		}
+		input.ReferencePrompt = strings.TrimSpace(input.ReferencePrompt)
+		if len([]rune(input.ReferencePrompt)) < 8 || len([]rune(input.ReferencePrompt)) > 4000 {
+			return nil, apierror.Invalid("请先完成参考图提示词分析", nil)
+		}
+	}
 
 	providerModel, aiModel, err := s.currentModel(ctx, "chat")
 	if err != nil {
@@ -124,11 +221,6 @@ func (s *Service) Optimize(ctx context.Context, userID string, input OptimizeInp
 		if assetModel.Kind != asset.KindReference || !IsValidReferenceRole(reference.Role) {
 			return nil, apierror.Invalid("参考图素材或用途无效", map[string]string{"assetId": reference.AssetID})
 		}
-		dataURL, err := s.assets.DataURL(ctx, *assetModel)
-		if err != nil {
-			return nil, err
-		}
-		imageDataURLs = append(imageDataURLs, dataURL)
 	}
 	if len(imageDataURLs) > 0 && !capabilities["visionInput"] {
 		return nil, apierror.New(http.StatusConflict, apierror.CodeAICapability, "当前对话模型不支持图片输入", nil)
@@ -157,7 +249,6 @@ func (s *Service) Optimize(ctx context.Context, userID string, input OptimizeInp
 		SystemPrompt:  optimizationSystemPrompt,
 		Prompt:        buildOptimizationInput(input),
 		ImageDataURLs: imageDataURLs,
-		MaxTokens:     1800,
 	})
 	if err != nil {
 		s.logger.ErrorContext(ctx, "prompt_optimization_provider_call_failed",
@@ -188,6 +279,7 @@ func (s *Service) Optimize(ctx context.Context, userID string, input OptimizeInp
 			nil,
 		)
 	}
+	sections.ReferencePrompt = input.ReferencePrompt
 
 	sourceIDs, _ := json.Marshal(input.SourceAssetIDs)
 	references, _ := json.Marshal(input.ReferenceAssets)
@@ -211,7 +303,7 @@ func (s *Service) Optimize(ctx context.Context, userID string, input OptimizeInp
 	return dto(version, sections), nil
 }
 
-func (s *Service) Confirm(ctx context.Context, userID string, input ConfirmInput) (*DTO, error) {
+func (s *Service) Confirm(ctx context.Context, userID string, input ConfirmInput, idempotencyKey string) (*DTO, error) {
 	input.Source = strings.TrimSpace(input.Source)
 	if input.ID == "" || input.Source == "" {
 		return nil, apierror.Invalid("提示词版本和原始需求不能为空", nil)
@@ -221,9 +313,25 @@ func (s *Service) Confirm(ctx context.Context, userID string, input ConfirmInput
 	}
 
 	var result model.PromptVersion
+	var replayed *DTO
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		recordID, replay, err := idempotency.AcquireTx(tx, idempotency.Scope{
+			PrincipalRealm: "user", PrincipalID: userID, Method: http.MethodPost,
+			Path: "/api/prompts/confirm", Key: idempotencyKey, Request: input,
+		})
+		if err != nil {
+			return err
+		}
+		if replay != nil {
+			var output DTO
+			if err := json.Unmarshal(replay.Data, &output); err != nil {
+				return err
+			}
+			replayed = &output
+			return nil
+		}
 		var draft model.PromptVersion
-		err := tx.Where("id = ? AND user_id = ?", input.ID, userID).First(&draft).Error
+		err = tx.Where("id = ? AND user_id = ?", input.ID, userID).First(&draft).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return apierror.New(http.StatusNotFound, apierror.CodePromptNotFound, "提示词版本不存在", nil)
 		}
@@ -246,10 +354,17 @@ func (s *Service) Confirm(ctx context.Context, userID string, input ConfirmInput
 			Status:                StatusConfirmed,
 			ConfirmedAt:           &now,
 		}
-		return tx.Create(&result).Error
+		if err := tx.Create(&result).Error; err != nil {
+			return err
+		}
+		output := dto(result, input.Sections)
+		return idempotency.CompleteTx(tx, recordID, http.StatusOK, 0, "prompt_version", &result.ID, output)
 	})
 	if err != nil {
 		return nil, err
+	}
+	if replayed != nil {
+		return replayed, nil
 	}
 	return dto(result, input.Sections), nil
 }
@@ -290,6 +405,9 @@ func BuildGenerationPrompt(source string, sections Sections) string {
 		if value := strings.TrimSpace(section.value); value != "" {
 			values = append(values, section.label+"："+value)
 		}
+	}
+	if referencePrompt := strings.TrimSpace(sections.ReferencePrompt); referencePrompt != "" {
+		values = append(values, "参考图提示词（仅用于风格、氛围和镜头参考，不替代原图主体）："+referencePrompt)
 	}
 	return strings.Join(values, "\n")
 }
@@ -363,6 +481,9 @@ func validateSections(sections Sections) error {
 	if total > 8000 {
 		return apierror.Invalid("优化提示词内容过长", nil)
 	}
+	if len([]rune(sections.ReferencePrompt)) > 4000 {
+		return apierror.Invalid("参考图提示词内容过长", nil)
+	}
 	return nil
 }
 
@@ -388,12 +509,37 @@ func buildOptimizationInput(input OptimizeInput) string {
 		roles = append(roles, reference.Role)
 	}
 	return fmt.Sprintf(
-		"创作模式：%s\n用户原始需求：%s\n原图数量：%d\n参考图用途：%s",
+		"创作模式：%s\n用户原始需求：%s\n原图数量：%d\n参考图用途：%s\n参考图提示词：%s",
 		input.Mode,
 		input.Source,
 		len(input.SourceAssetIDs),
 		strings.Join(roles, "、"),
+		strings.TrimSpace(input.ReferencePrompt),
 	)
+}
+
+func buildReferencePromptInput(references []ReferenceAsset) string {
+	roles := make([]string, 0, len(references))
+	for _, reference := range references {
+		roles = append(roles, reference.Role)
+	}
+	return fmt.Sprintf("请分析上传的参考图片，并按用途 %s 输出一段可用于生图的参考提示词。", strings.Join(roles, "、"))
+}
+
+func parseReferencePrompt(content string) string {
+	content = strings.TrimSpace(content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```JSON")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	content = strings.TrimSpace(content)
+	var payload struct {
+		Prompt string `json:"prompt"`
+	}
+	if json.Unmarshal([]byte(content), &payload) == nil && strings.TrimSpace(payload.Prompt) != "" {
+		return strings.TrimSpace(payload.Prompt)
+	}
+	return content
 }
 
 func dto(version model.PromptVersion, sections Sections) *DTO {
@@ -409,3 +555,7 @@ const optimizationSystemPrompt = `你是专业商业修图提示词编辑。请�
 只返回一个 JSON 对象，不要使用 Markdown。必须恰好包含以下字符串字段：
 subject、scene、style、composition、details、negative、output。
 保留人物身份与用户明确要求，不编造敏感属性。negative 用于描述需要避免的内容。`
+
+const referencePromptSystemPrompt = `你是专业的商业摄影与 Midjourney 提示词分析师。请只分析参考图片，不把参考图当作待修改原图。
+请输出一段中文 Midjourney 风格的参考提示词，必须覆盖：主体、场景、风格、镜头与光影、细节修饰。
+只返回提示词正文或 {"prompt":"..."}，不要解释，不要编造图片中不存在的身份和敏感属性。`

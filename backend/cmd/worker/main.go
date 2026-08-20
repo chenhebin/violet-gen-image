@@ -20,6 +20,7 @@ import (
 	"yingyan.local/backend/internal/health"
 	appmiddleware "yingyan.local/backend/internal/middleware"
 	"yingyan.local/backend/internal/platform/database"
+	"yingyan.local/backend/internal/retouch"
 	"yingyan.local/backend/internal/storage"
 	"yingyan.local/backend/internal/worker"
 )
@@ -58,8 +59,11 @@ func main() {
 		assetService,
 		aiFactory,
 		cfg.Worker.StaleAfter,
+		cfg.Worker.QueueTimeout,
+		cfg.Worker.OutputTimeout,
 		logger,
 	)
+	retouchService := retouch.New(db, creditService, assetService, nil)
 
 	checker := health.NewChecker(db, store)
 	healthRouter := gin.New()
@@ -81,6 +85,29 @@ func main() {
 		runnerErrors <- worker.New(
 			logger, cfg.Worker.PollInterval, cfg.Worker.WorkerID, processor,
 		).Run(ctx)
+	}()
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				expired, expireErr := retouchService.ExpireQuotes(ctx, 100)
+				if expireErr != nil {
+					logger.Error("retouch_quote_expiry_failed", "error", expireErr)
+				} else if expired > 0 {
+					logger.Info("retouch_quote_expired", "count", expired)
+				}
+				cleaned, cleanupErr := assetService.CleanupExpired(ctx, 20)
+				if cleanupErr != nil {
+					logger.Error("asset_cleanup_failed", "error", cleanupErr)
+				} else if cleaned > 0 {
+					logger.Info("asset_cleanup_completed", "count", cleaned)
+				}
+			}
+		}
 	}()
 
 	select {

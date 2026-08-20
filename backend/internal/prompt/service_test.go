@@ -34,3 +34,27 @@ func TestBuildGenerationPromptUsesRawRequirementWhenSectionsAreEmpty(t *testing.
 		t.Fatalf("empty optimized sections leaked into direct prompt: %q", result)
 	}
 }
+
+func TestBuildGenerationPromptKeepsReferencePromptTextual(t *testing.T) {
+	result := BuildGenerationPrompt("只修改服装颜色", Sections{
+		Subject:         "保留人物身份",
+		ReferencePrompt: "清透杂志氛围，50mm 镜头，柔和侧逆光",
+	})
+	if !strings.Contains(result, "参考图提示词（仅用于风格、氛围和镜头参考，不替代原图主体）：") {
+		t.Fatalf("reference prompt marker missing: %q", result)
+	}
+	if !strings.Contains(result, "清透杂志氛围") {
+		t.Fatalf("reference prompt missing: %q", result)
+	}
+}
+
+func TestParseReferencePromptAcceptsPlainTextAndJSON(t *testing.T) {
+	plain := parseReferencePrompt("清透杂志氛围，柔和侧逆光")
+	if plain != "清透杂志氛围，柔和侧逆光" {
+		t.Fatalf("plain prompt = %q", plain)
+	}
+	jsonPrompt := parseReferencePrompt("```json\n{\"prompt\":\"50mm 人像镜头，真实材质\"}\n```")
+	if jsonPrompt != "50mm 人像镜头，真实材质" {
+		t.Fatalf("json prompt = %q", jsonPrompt)
+	}
+}

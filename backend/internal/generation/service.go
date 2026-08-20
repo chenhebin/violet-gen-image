@@ -45,14 +45,22 @@ const (
 )
 
 type Service struct {
-	db      *gorm.DB
-	credits *credit.Service
-	assets  *asset.Service
-	prompts *prompt.Service
+	db           *gorm.DB
+	credits      *credit.Service
+	assets       *asset.Service
+	prompts      *prompt.Service
+	queueTimeout time.Duration
 }
 
-func New(db *gorm.DB, credits *credit.Service, assets *asset.Service, prompts *prompt.Service) *Service {
-	return &Service{db: db, credits: credits, assets: assets, prompts: prompts}
+func New(db *gorm.DB, credits *credit.Service, assets *asset.Service, prompts *prompt.Service, queueTimeout ...time.Duration) *Service {
+	deadline := 10 * time.Minute
+	if len(queueTimeout) > 0 && queueTimeout[0] > 0 {
+		deadline = queueTimeout[0]
+	}
+	return &Service{
+		db: db, credits: credits, assets: assets, prompts: prompts,
+		queueTimeout: deadline,
+	}
 }
 
 func (s *Service) Create(
@@ -98,6 +106,9 @@ func (s *Service) Create(
 			return err
 		}
 		resolvedMode := generationModeForAssets(assets)
+		if resolvedMode == "image-to-image" && !hasSourceAsset(assets) {
+			return apierror.Invalid("图生图必须上传待修改原图", nil)
+		}
 		promptVersion, referenceRoles, err := resolvePromptVersion(
 			tx,
 			userID,
@@ -183,6 +194,7 @@ func (s *Service) Create(
 			}
 		}
 		now := time.Now().UTC()
+		deadline := now.Add(s.queueTimeout)
 		for index := 0; index < input.Settings.OutputCount; index++ {
 			output := model.GenerationOutput{
 				TaskID: task.ID, OutputIndex: index, Status: OutputQueued, Version: 1,
@@ -197,6 +209,7 @@ func (s *Service) Create(
 				Status:      JobQueued,
 				MaxAttempts: 1,
 				AvailableAt: now,
+				DeadlineAt:  &deadline,
 				Version:     1,
 			}
 			if err := tx.Create(&job).Error; err != nil {
@@ -228,29 +241,55 @@ func (s *Service) Get(ctx context.Context, userID string, taskID string) (*TaskD
 	return s.dto(ctx, task)
 }
 
-func (s *Service) List(ctx context.Context, userID string) ([]TaskDTO, error) {
+func (s *Service) List(ctx context.Context, userID string, page int, pageSize int) (TaskPage, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	query := s.db.WithContext(ctx).Model(&model.GenerationTask{}).Where("user_id = ?", userID)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return TaskPage{}, err
+	}
 	var tasks []model.GenerationTask
-	if err := s.db.WithContext(ctx).
-		Where("user_id = ?", userID).
+	if err := query.
 		Order("created_at DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
 		Find(&tasks).Error; err != nil {
-		return nil, err
+		return TaskPage{}, err
 	}
 	result := make([]TaskDTO, 0, len(tasks))
 	for _, task := range tasks {
 		value, err := s.dto(ctx, task)
 		if err != nil {
-			return nil, err
+			return TaskPage{}, err
 		}
 		result = append(result, *value)
 	}
-	return result, nil
+	return TaskPage{Items: result, Page: page, PageSize: pageSize, Total: total, HasMore: int64(page*pageSize) < total}, nil
 }
 
-func (s *Service) Cancel(ctx context.Context, userID string, taskID string) (*TaskDTO, error) {
+func (s *Service) Cancel(ctx context.Context, userID string, taskID string, idempotencyKey string) (*TaskDTO, error) {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		recordID, replay, err := idempotency.AcquireTx(tx, idempotency.Scope{
+			PrincipalRealm: "user", PrincipalID: userID, Method: http.MethodPost,
+			Path: "/api/tasks/" + taskID + "/cancel", Key: idempotencyKey,
+			Request: map[string]string{"taskId": taskID},
+		})
+		if err != nil {
+			return err
+		}
+		if replay != nil {
+			return nil
+		}
 		var task model.GenerationTask
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ? AND user_id = ?", taskID, userID).
 			First(&task).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -260,7 +299,7 @@ func (s *Service) Cancel(ctx context.Context, userID string, taskID string) (*Ta
 			return err
 		}
 		if task.Status == StatusCancelled {
-			return nil
+			return idempotency.CompleteTx(tx, recordID, http.StatusOK, 0, "generation_task", &task.ID, map[string]string{"taskId": task.ID})
 		}
 		if task.Status != StatusQueued {
 			return apierror.New(http.StatusConflict, apierror.CodeInvalidInput, "只有排队中的任务可以取消", nil)
@@ -287,8 +326,11 @@ func (s *Service) Cancel(ctx context.Context, userID string, taskID string) (*Ta
 			Update("status", OutputCancelled).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.GenerationJob{}).Where("task_id = ? AND status = ?", task.ID, JobQueued).
-			Updates(map[string]any{"status": JobCancelled, "completed_at": &now}).Error
+		if err := tx.Model(&model.GenerationJob{}).Where("task_id = ? AND status = ?", task.ID, JobQueued).
+			Updates(map[string]any{"status": JobCancelled, "completed_at": &now}).Error; err != nil {
+			return err
+		}
+		return idempotency.CompleteTx(tx, recordID, http.StatusOK, 0, "generation_task", &task.ID, map[string]string{"taskId": task.ID})
 	})
 	if err != nil {
 		return nil, err
@@ -354,7 +396,8 @@ func (s *Service) dto(ctx context.Context, task model.GenerationTask) (*TaskDTO,
 		}
 		results = append(results, ResultDTO{
 			ID: assetModel.ID, URL: value.PreviewURL, DownloadURL: downloadURL,
-			Width: assetModel.Width, Height: assetModel.Height,
+			URLExpiresAt: value.PreviewURLExpiresAt,
+			Width:        assetModel.Width, Height: assetModel.Height,
 		})
 	}
 	progress := EstimatedProgress(task, time.Now().UTC())
@@ -631,6 +674,15 @@ func generationModeForAssets(assets []model.Asset) string {
 		return "image-to-image"
 	}
 	return "text-to-image"
+}
+
+func hasSourceAsset(assets []model.Asset) bool {
+	for _, assetModel := range assets {
+		if assetModel.Kind == asset.KindSource {
+			return true
+		}
+	}
+	return false
 }
 
 func taskTitle(source string) string {

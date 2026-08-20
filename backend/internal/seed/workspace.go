@@ -338,8 +338,12 @@ func ensureDemoTask(
 		if err := db.Create(&model.ProviderAttempt{
 			JobID: job.ID, ProviderID: provider.ID, ModelID: imageModel.ID,
 			AttemptNo: 1, Status: "succeeded",
+			Operation: "edit_image", HTTPMethod: "POST", EndpointPath: "/v1/images/edits",
+			ModelName: imageModel.ModelID, ResponseStatus: 200,
 			ExternalRequestID: output.ProviderResponseID,
 			RequestAccepted:   &accepted, LatencyMillis: 1300,
+			RequestSummary: datatypes.JSON([]byte(`{"operation":"edit_image","method":"POST","path":"/v1/images/edits","model":"gpt-image-2","parameterSummary":{"promptLength":96,"imageCount":1,"outputCount":1},"status":200,"latencyMs":1300}`)),
+			ResponseMetadata: datatypes.JSON([]byte(`{"imageCount":1,"contentType":"image/png","source":"base64"}`)),
 			StartedAt: startedAt, CompletedAt: &completedAt,
 		}).Error; err != nil {
 			return model.GenerationTask{}, err

@@ -37,6 +37,20 @@ type BatchQuery struct {
 	ProductCode string
 }
 
+const (
+	ExportFormatCSV    = "csv"
+	ExportFormatXianyu = "xianyu"
+)
+
+type RedemptionExport struct {
+	Filename  string `json:"filename"`
+	Content   string `json:"content"`
+	CSV       string `json:"csv,omitempty"`
+	MediaType string `json:"mediaType"`
+	Format    string `json:"format"`
+	Count     int    `json:"count"`
+}
+
 func (s *Service) ListCodes(ctx context.Context, input CodeQuery) (PageResult[RedemptionCodeDTO], error) {
 	input.Page, input.PageSize = pageValues(input.Page, input.PageSize)
 	query := s.db.WithContext(ctx).Model(&model.RedemptionCode{}).
@@ -298,14 +312,28 @@ func (s *Service) RevealBatch(ctx context.Context, batchID string) ([]redemption
 	return result, nil
 }
 
-func (s *Service) ExportBatch(ctx context.Context, batchID string) (string, string, error) {
+func (s *Service) ExportBatch(ctx context.Context, batchID string, format string) (*RedemptionExport, error) {
 	batch, err := s.GetBatch(ctx, batchID)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	codes, err := s.RevealBatch(ctx, batchID)
 	if err != nil {
-		return "", "", err
+		return nil, err
+	}
+	if format == "" {
+		format = ExportFormatCSV
+	}
+	if format == ExportFormatXianyu {
+		return &RedemptionExport{
+			Filename:  "xianyu-inventory-" + batch.ID + ".txt",
+			Content:   buildXianyuInventory(s.publicWebURL, codes),
+			MediaType: "text/plain;charset=utf-8",
+			Format:    format, Count: len(codes),
+		}, nil
+	}
+	if format != ExportFormatCSV {
+		return nil, apierror.Invalid("不支持的导出格式", map[string]any{"format": format})
 	}
 	var builder strings.Builder
 	writer := csv.NewWriter(&builder)
@@ -319,9 +347,13 @@ func (s *Service) ExportBatch(ctx context.Context, batchID string) (string, stri
 	}
 	writer.Flush()
 	if err := writer.Error(); err != nil {
-		return "", "", err
+		return nil, err
 	}
-	return "redemption-" + batch.ID + ".csv", builder.String(), nil
+	return &RedemptionExport{
+		Filename: "redemption-" + batch.ID + ".csv",
+		Content:  builder.String(), CSV: builder.String(), MediaType: "text/csv;charset=utf-8",
+		Format: format, Count: len(codes),
+	}, nil
 }
 
 func (s *Service) batchDTO(ctx context.Context, batch model.RedemptionBatch) (RedemptionBatchDTO, error) {

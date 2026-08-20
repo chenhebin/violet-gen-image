@@ -52,11 +52,15 @@ const promptPlaceholder =
           variant="secondary"
           :loading="workspace.optimizing"
           :disabled="!workspace.canOptimize"
-          @click="workspace.optimizePrompt"
+          @click="workspace.preparePrompt"
         >
           <template #icon><Sparkles :size="17" /></template>
           {{
-            workspace.draft.promptVersion ? '重新优化提示词' : '优化提示词'
+            workspace.hasReferenceAssets
+              ? '根据参考图优化提示词'
+              : workspace.draft.promptVersion
+                ? '重新优化提示词'
+                : '优化提示词'
           }}
         </BaseButton>
         <p class="free-note">提示词优化免费，不消耗次数</p>
@@ -73,6 +77,26 @@ const promptPlaceholder =
           </div>
 
           <div class="section-fields">
+            <div
+              v-if="workspace.draft.promptVersion.sections.referencePrompt"
+              class="reference-prompt-field"
+            >
+              <div class="reference-prompt-heading">
+                <div>
+                  <span>参考图提示词</span>
+                  <small>仅作为风格、氛围和镜头参考，不会作为生图原图上传</small>
+                </div>
+              </div>
+              <textarea
+                :value="workspace.draft.promptVersion.sections.referencePrompt"
+                rows="4"
+                @input="
+                  workspace.updateReferencePrompt(
+                    ($event.target as HTMLTextAreaElement).value,
+                  )
+                "
+              />
+            </div>
             <PromptSectionField
               v-for="section in PROMPT_SECTION_OPTIONS"
               :key="section.key"
@@ -239,6 +263,47 @@ textarea:focus {
 .section-fields {
   display: grid;
   gap: 9px;
+}
+
+.reference-prompt-field {
+  display: grid;
+  gap: 7px;
+  padding: 11px;
+  border: 1px solid rgb(20 108 99 / 22%);
+  border-radius: var(--radius-md);
+  background: var(--primary-soft);
+}
+
+.reference-prompt-heading {
+  display: flex;
+  justify-content: space-between;
+}
+
+.reference-prompt-heading span {
+  display: block;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.reference-prompt-heading small {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.reference-prompt-field textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  border: 1px solid rgb(20 108 99 / 22%);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 .optimized > .base-button {
